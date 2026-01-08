@@ -7,17 +7,19 @@ function retroicor_batch(input_folder)
 %   - RETRO-resp_*.1D  (must exist to run)
 %   - RETRO-qrs_*.1D   (optional; if missing, cardiac is skipped)
 %
-% Outputs are written into the same input_folder (next to inputs).
+% Outputs:
+%   - corrected BOLD -> output_corrected_folder/<boldbase>_retro-corrected.nii.gz
+%   - regressors/pctvar/phases/json -> next to inputs (in input_folder)
 
     if nargin < 1 || isempty(input_folder)
-        input_folder = "/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/4_names_corrected";
+        input_folder = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/4_names_corrected';
     end
 
+    % Ensure char (not string)
     input_folder = char(input_folder);
 
-    % --- IMPORTANT: put your retroicor code folder here (no hard-coded paths elsewhere) ---
     % Update this to wherever retroicor_main_modi.m and friends live:
-    retroicor_code_dir = "/autofs/cluster/vagabond/USERS/MARIO/Pipelines/9_tvns/retroicor";
+    retroicor_code_dir = '/autofs/cluster/vagabond/USERS/MARIO/Pipelines/9_tvns/retroicor';
     addpath(retroicor_code_dir);
 
     % Optional: avoid /tmp space issues if needed
@@ -31,79 +33,81 @@ function retroicor_batch(input_folder)
     save_phase_plot = 0;
     save_var_nii   = 0;
 
-    % NEW: folder to save corrected BOLD files
+    % Folder to save corrected BOLD files
     output_corrected_folder = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/5_corrected_bold';
     if ~exist(output_corrected_folder, 'dir')
         mkdir(output_corrected_folder);
     end
 
     % Find bolds
-    bolds = dir(fullfile(input_folder, "*_bold.nii.gz"));
+    bolds = dir(fullfile(input_folder, '*_bold.nii.gz'));
     if isempty(bolds)
-        fprintf("No *_bold.nii.gz found in: %s\n", input_folder);
+        fprintf('No *_bold.nii.gz found in: %s\n', input_folder);
         return;
     end
 
     for k = 1:numel(bolds)
 
-        funcname = bolds(k).name;                        % e.g. sub-..._bold.nii.gz
-        [~, boldbase, ~] = fileparts(funcname);          % strips .gz -> leaves *.nii
-        [~, boldbase, ~] = fileparts(boldbase);          % strips .nii -> leaves base without ext
+        funcname = bolds(k).name;                 % e.g. sub-..._bold.nii.gz
+        [~, boldbase, ~] = fileparts(funcname);   % strips .gz -> leaves *.nii
+        [~, boldbase, ~] = fileparts(boldbase);   % strips .nii -> leaves base without ext
 
         boldPath = fullfile(input_folder, funcname);
-        jsonPath = fullfile(input_folder, [boldbase ".json"]);
-
+        jsonPath = fullfile(input_folder, [boldbase '.json']);
 
         outbase  = fullfile(input_folder, boldbase);
-        % save corrected bold into dedicated output folder
-        outfunc  = fullfile(output_corrected_folder, [boldbase "_retro-corrected.nii.gz"]);
 
-        if exist(outfunc, "file") == 2
-            fprintf("[SKIP] already corrected: %s\n", funcname);
+        % Save corrected bold into dedicated output folder
+        outfunc  = fullfile(output_corrected_folder, [boldbase '_retro-corrected.nii.gz']);
+
+        if exist(outfunc, 'file') == 2
+            fprintf('[SKIP] already corrected: %s\n', funcname);
             continue
         end
 
-        if exist(jsonPath, "file") ~= 2
-            fprintf("[SKIP] missing JSON for: %s\n", funcname);
+        if exist(jsonPath, 'file') ~= 2
+            fprintf('[SKIP] missing JSON for: %s\n', funcname);
             continue
         end
 
         % --- Locate physio files (flexible matching) ---
-        % Prefer "annotated_" if present, otherwise any match
-        resp_candidates = dir(fullfile(input_folder, ["RETRO-resp_*" boldbase "*.1D"]));
+        resp_candidates = dir(fullfile(input_folder, ['RETRO-resp_*' boldbase '*.1D']));
         if isempty(resp_candidates)
-            resp_candidates = dir(fullfile(input_folder, ["*resp*" boldbase "*.1D"]));
+            resp_candidates = dir(fullfile(input_folder, ['*resp*' boldbase '*.1D']));
         end
 
-        qrs_candidates = dir(fullfile(input_folder, ["RETRO-qrs_*" boldbase "*.1D"]));
+        qrs_candidates = dir(fullfile(input_folder, ['RETRO-qrs_*' boldbase '*.1D']));
         if isempty(qrs_candidates)
-            qrs_candidates = dir(fullfile(input_folder, ["*qrs*" boldbase "*.1D"]));
+            qrs_candidates = dir(fullfile(input_folder, ['*qrs*' boldbase '*.1D']));
         end
 
+        % Require RESP to run
         if isempty(resp_candidates)
-            fprintf("[SKIP] no RESP .1D for: %s\n", boldbase);
+            fprintf('[SKIP] no RESP .1D for: %s\n', boldbase);
             continue
         end
 
+        % If multiple matches exist, take the first (you can refine if needed)
         respfile = fullfile(resp_candidates(1).folder, resp_candidates(1).name);
+
         hasQRS = ~isempty(qrs_candidates);
         if hasQRS
             qrsfile = fullfile(qrs_candidates(1).folder, qrs_candidates(1).name);
         else
-            qrsfile = "";
+            qrsfile = '';
         end
 
         % --- Load physio ---
         % RESP (required)
-        RESPretro = readtable(respfile, "FileType", "text", "ReadVariableNames", false);
+        RESPretro = readtable(respfile, 'FileType', 'text', 'ReadVariableNames', false);
         resp_struct = struct();
         resp_struct.wave = RESPretro.Var1;
         resp_struct.dt   = 1/fs;
 
         % QRS (optional)
         QRSretro_trig = [];
-        if hasQRS && exist(qrsfile, "file") == 2
-            QRStmp = readtable(qrsfile, "FileType", "text", "ReadVariableNames", false);
+        if hasQRS && exist(qrsfile, 'file') == 2
+            QRStmp = readtable(qrsfile, 'FileType', 'text', 'ReadVariableNames', false);
             QRSretro = QRStmp.Var1;
 
             if max(QRSretro) == 1
@@ -117,38 +121,42 @@ function retroicor_batch(input_folder)
 
         % --- Read JSON for slice timing + TR ---
         js = jsondecode(fileread(jsonPath));
-        if ~isfield(js, "SliceTiming")
-            fprintf("[SKIP] JSON missing SliceTiming: %s\n", jsonPath);
+        if ~isfield(js, 'SliceTiming')
+            fprintf('[SKIP] JSON missing SliceTiming: %s\n', jsonPath);
             continue
         end
         ST = js.SliceTiming;
 
-        if isfield(js, "RepetitionTime")
+        if isfield(js, 'RepetitionTime')
             TR = js.RepetitionTime;
         else
-            % fallback if missing
-            TR = 1.19;
+            TR = 1.19; % fallback
         end
 
         % Update physio flags + write JSON copy (same basename)
         js.CardiacPhysio = ~isempty(QRSretro_trig);
         js.RespPhysio    = ~isempty(resp_struct.wave);
-        fid = fopen([outbase ".json"], "w");
-        fprintf(fid, "%s", jsonencode(js));
-        fclose(fid);
+
+        fid = fopen([outbase '.json'], 'w');
+        if fid < 0
+            fprintf('[WARN] could not write JSON: %s\n', [outbase '.json']);
+        else
+            fprintf(fid, '%s', jsonencode(js));
+            fclose(fid);
+        end
 
         % --- Load BOLD ---
         try
             image_matrix = niftiread(boldPath);
             info = niftiinfo(boldPath);
         catch ME
-            fprintf("[SKIP] cannot read NIfTI: %s (%s)\n", boldPath, ME.message);
+            fprintf('[SKIP] cannot read NIfTI: %s (%s)\n', boldPath, ME.message);
             continue
         end
 
         [~, ~, nslices, maxvol] = size(image_matrix);
 
-        fprintf("Running RETROICOR: %s (RESP=%d, QRS=%d)\n", boldbase, 1, ~isempty(QRSretro_trig));
+        fprintf('Running RETROICOR: %s (RESP=%d, QRS=%d)\n', boldbase, 1, ~isempty(QRSretro_trig));
 
         % --- Run RETROICOR ---
         [image_matrix_corrected, PHASES, REGRESSORS, OTHER] = retroicor_main_modi( ...
@@ -157,12 +165,21 @@ function retroicor_batch(input_folder)
         % --- Save corrected image ---
         if OPTIONS.doCorr == 1
             image_matrix_corrected = int16(image_matrix_corrected);
-            niftiwrite(image_matrix_corrected, outfunc, info);
+
+            % Some MATLAB versions may not like writing .nii.gz directly.
+            % If niftiwrite fails, write .nii then gzip it.
+            try
+                niftiwrite(image_matrix_corrected, outfunc, info);
+            catch
+                outnii = fullfile(output_corrected_folder, [boldbase '_retro-corrected.nii']);
+                niftiwrite(image_matrix_corrected, outnii, info);
+                system(sprintf('gzip -f "%s"', outnii));
+            end
         end
 
         % --- Save regressors + pctvar ---
-        save([outbase "_retro-regressors.mat"], "REGRESSORS");
-        save([outbase "_retro-pctvar.mat"], "-struct", "OTHER", "PCT_VAR_REDUCED");
+        save([outbase '_retro-regressors.mat'], 'REGRESSORS');
+        save([outbase '_retro-pctvar.mat'], '-struct', 'OTHER', 'PCT_VAR_REDUCED');
 
         % --- Phases output ---
         if ~isempty(resp_struct.wave) && ~isempty(QRSretro_trig)
@@ -173,8 +190,8 @@ function retroicor_batch(input_folder)
                 card_phases(:, sl) = phases(:, 1);
                 resp_phases(:, sl) = phases(:, 2);
             end
-            writetable(array2table(card_phases), [outbase "_retro-cardphases.txt"]);
-            writetable(array2table(resp_phases), [outbase "_retro-respphases.txt"]);
+            writetable(array2table(card_phases), [outbase '_retro-cardphases.txt']);
+            writetable(array2table(resp_phases), [outbase '_retro-respphases.txt']);
 
         elseif ~isempty(resp_struct.wave)
             resp_phases = zeros(maxvol, nslices);
@@ -182,7 +199,7 @@ function retroicor_batch(input_folder)
                 phases = PHASES{sl};
                 resp_phases(:, sl) = phases(:, 1);
             end
-            writetable(array2table(resp_phases), [outbase "_retro-respphases.txt"]);
+            writetable(array2table(resp_phases), [outbase '_retro-respphases.txt']);
 
         elseif ~isempty(QRSretro_trig)
             card_phases = zeros(maxvol, nslices);
@@ -190,7 +207,7 @@ function retroicor_batch(input_folder)
                 phases = PHASES{sl};
                 card_phases(:, sl) = phases(:, 1);
             end
-            writetable(array2table(card_phases), [outbase "_retro-cardphases.txt"]);
+            writetable(array2table(card_phases), [outbase '_retro-cardphases.txt']);
         end
 
         % --- Optional extras (kept, but default off) ---
@@ -199,7 +216,13 @@ function retroicor_batch(input_folder)
             var_info.PixelDimensions = info.PixelDimensions(1:3);
             var_info.ImageSize       = info.ImageSize(1:3);
             pctvar = int16(round(OTHER.PCT_VAR_REDUCED * 10000));
-            niftiwrite(pctvar, [outbase "_retro-PctVarReduced.nii.gz"], var_info);
+            try
+                niftiwrite(pctvar, [outbase '_retro-PctVarReduced.nii.gz'], var_info);
+            catch
+                outnii = [outbase '_retro-PctVarReduced.nii'];
+                niftiwrite(pctvar, outnii, var_info);
+                system(sprintf('gzip -f "%s"', outnii));
+            end
         end
 
         if save_hist_plot == 1
@@ -211,27 +234,27 @@ function retroicor_batch(input_folder)
                 hist_mat(:, sl) = Hb;
             end
             xx = adj_edges(1:end-1) + diff(adj_edges);
-            S = figure("visible", "off");
-            surf(xx * 100, 1:nslices, hist_mat', "FaceAlpha", 0.7);
-            xlabel("% Variance Change"); ylabel("Slices"); zlabel("# voxels");
+            S = figure('visible', 'off');
+            surf(xx * 100, 1:nslices, hist_mat', 'FaceAlpha', 0.7);
+            xlabel('% Variance Change'); ylabel('Slices'); zlabel('# voxels');
             colorbar;
-            saveas(S, [outbase "_retro-varchgsurf.png"]);
+            saveas(S, [outbase '_retro-varchgsurf.png']);
             close(S);
         end
 
         if save_phase_plot == 1
-            if exist("resp_phases", "var")
-                ph = figure("visible", "off");
-                heatmap(resp_phases' + pi, "Colormap", parula);
-                xlabel("Time (TRs)"); ylabel("Slices"); title("Respiratory Phase");
+            if exist('resp_phases', 'var')
+                ph = figure('visible', 'off');
+                heatmap(resp_phases' + pi, 'Colormap', parula);
+                xlabel('Time (TRs)'); ylabel('Slices'); title('Respiratory Phase');
                 ax = gca;
                 ax.XDisplayLabels = repmat(' ', maxvol, 1);
                 ax.YDisplayLabels = repmat(' ', nslices, 1);
-                saveas(ph, [outbase "_retro-phases.png"]);
+                saveas(ph, [outbase '_retro-phases.png']);
                 close(ph);
             end
         end
 
-        fprintf("[OK] finished: %s\n", boldbase);
+        fprintf('[OK] finished: %s\n', boldbase);
     end
 end
