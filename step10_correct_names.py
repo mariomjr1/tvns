@@ -86,7 +86,7 @@ for g in ["Rest", "Block", "Cont"]:
         run_2d = f"{run_int:02d}"
 
         task = task_map[g]
-        new_name = f"sub-{subj_part}_ses-01_task-{task}_run-{run_2d}_bold.1D"
+        new_name = f"RETRO-resp_sub-{subj_part}_ses-01_task-{task}_run-{run_2d}_bold.1D"
         dst = output_folder / new_name
 
         if dst.exists():
