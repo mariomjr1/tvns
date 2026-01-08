@@ -24,7 +24,7 @@ function retroicorBatch()
     thisFileDir = fileparts(mfilename('fullpath'));
     addpath(thisFileDir);
 
-    physioFolder = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/2_retroicor';
+    physioFolder = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/2_retroicor_ready';
     outputFolder = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/3_generated1D';
 
     % Set these here (no GUI inputs)
