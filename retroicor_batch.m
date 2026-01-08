@@ -17,7 +17,7 @@ function retroicor_batch(input_folder)
 
     % --- IMPORTANT: put your retroicor code folder here (no hard-coded paths elsewhere) ---
     % Update this to wherever retroicor_main_modi.m and friends live:
-    retroicor_code_dir = "/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/retroicor";
+    retroicor_code_dir = "/autofs/cluster/vagabond/USERS/MARIO/Pipelines/9_tvns/retroicor";
     addpath(retroicor_code_dir);
 
     % Optional: avoid /tmp space issues if needed
