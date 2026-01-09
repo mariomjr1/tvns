@@ -7,9 +7,9 @@ function retroicor_batch(input_folder)
 %   - RETRO-resp_*.1D  (must exist to run)
 %   - RETRO-qrs_*.1D   (optional; if missing, cardiac is skipped)
 %
-% Outputs:
+% Outputs (ALL) are written into output_corrected_folder:
 %   - corrected BOLD -> output_corrected_folder/<boldbase>_retro-corrected.nii.gz
-%   - regressors/pctvar/phases/json -> next to inputs (in input_folder)
+%   - json/regressors/pctvar/phases/(optional outputs) -> output_corrected_folder/<boldbase>*
 
     if nargin < 1 || isempty(input_folder)
         input_folder = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/4_names_corrected';
@@ -22,18 +22,15 @@ function retroicor_batch(input_folder)
     retroicor_code_dir = '/autofs/cluster/vagabond/USERS/MARIO/Pipelines/9_tvns/retroicor';
     addpath(retroicor_code_dir);
 
-    % Optional: avoid /tmp space issues if needed
-    % tempdir('/autofs/.../tmp');
-
-    fs = 40;                 % sampling freq for 1D physio
+    fs = 40;                  % sampling freq for 1D physio
     OPTIONS = struct();
-    OPTIONS.doCorr = 1;       % apply correction & save corrected image
+    OPTIONS.doCorr = 1;        % apply correction & save corrected image
 
     save_hist_plot = 0;
     save_phase_plot = 0;
     save_var_nii   = 0;
 
-    % Folder to save corrected BOLD files
+    % Folder to save ALL outputs
     output_corrected_folder = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/5_corrected_bold';
     if ~exist(output_corrected_folder, 'dir')
         mkdir(output_corrected_folder);
@@ -55,10 +52,11 @@ function retroicor_batch(input_folder)
         boldPath = fullfile(input_folder, funcname);
         jsonPath = fullfile(input_folder, [boldbase '.json']);
 
-        outbase  = fullfile(input_folder, boldbase);
+        % Output base is now in output_corrected_folder (NOT input_folder)
+        outbase = fullfile(output_corrected_folder, boldbase);
 
-        % Save corrected bold into dedicated output folder
-        outfunc  = fullfile(output_corrected_folder, [boldbase '_retro-corrected.nii.gz']);
+        % Corrected bold saved into output_corrected_folder
+        outfunc = fullfile(output_corrected_folder, [boldbase '_retro-corrected.nii.gz']);
 
         if exist(outfunc, 'file') == 2
             fprintf('[SKIP] already corrected: %s\n', funcname);
@@ -87,7 +85,6 @@ function retroicor_batch(input_folder)
             continue
         end
 
-        % If multiple matches exist, take the first (you can refine if needed)
         respfile = fullfile(resp_candidates(1).folder, resp_candidates(1).name);
 
         hasQRS = ~isempty(qrs_candidates);
@@ -133,13 +130,14 @@ function retroicor_batch(input_folder)
             TR = 1.19; % fallback
         end
 
-        % Update physio flags + write JSON copy (same basename)
+        % Update physio flags + write JSON copy into output_corrected_folder
         js.CardiacPhysio = ~isempty(QRSretro_trig);
         js.RespPhysio    = ~isempty(resp_struct.wave);
 
-        fid = fopen([outbase '.json'], 'w');
+        outjson = [outbase '.json'];
+        fid = fopen(outjson, 'w');
         if fid < 0
-            fprintf('[WARN] could not write JSON: %s\n', [outbase '.json']);
+            fprintf('[WARN] could not write JSON: %s\n', outjson);
         else
             fprintf(fid, '%s', jsonencode(js));
             fclose(fid);
@@ -177,11 +175,11 @@ function retroicor_batch(input_folder)
             end
         end
 
-        % --- Save regressors + pctvar ---
+        % --- Save regressors + pctvar into output_corrected_folder ---
         save([outbase '_retro-regressors.mat'], 'REGRESSORS');
         save([outbase '_retro-pctvar.mat'], '-struct', 'OTHER', 'PCT_VAR_REDUCED');
 
-        % --- Phases output ---
+        % --- Phases output into output_corrected_folder ---
         if ~isempty(resp_struct.wave) && ~isempty(QRSretro_trig)
             card_phases = zeros(maxvol, nslices);
             resp_phases = zeros(maxvol, nslices);
@@ -210,7 +208,7 @@ function retroicor_batch(input_folder)
             writetable(array2table(card_phases), [outbase '_retro-cardphases.txt']);
         end
 
-        % --- Optional extras (kept, but default off) ---
+        % --- Optional extras (saved into output_corrected_folder) ---
         if save_var_nii == 1
             var_info = info;
             var_info.PixelDimensions = info.PixelDimensions(1:3);
