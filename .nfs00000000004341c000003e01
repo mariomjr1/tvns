@@ -11,7 +11,7 @@
 # per line) OR SUBJECTS should have a list of SUBJECTS (ex: "BLASAM24 BOCLIS10")
 # if neither is empty, those in SUBJECT_LIST will be ignored
 
-mapfile -t SUBJECTS < SubjectListfmriprep_run3.txt
+mapfile -t SUBJECTS < SubjectListfmriprep_run2.txt
 subject=${SUBJECTS[$SLURM_ARRAY_TASK_ID]}
 
 
