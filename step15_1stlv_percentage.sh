@@ -1,19 +1,19 @@
 #!/bin/bash
 
 # Set directories and task
-derivativesDir="/autofs/cluster/vagabond/USERS/MARIO/Projects/msit/sourcedata/derivatives"
-task="msit"
-subject_list="FullSubjectList.txt"
+derivativesDir="/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep"
+task="ContinuousStim"
+subject_list="SubjectListfmriprep.txt"
 
 # Initialize outlier summary file
-outlier_summary="${derivativesDir}/PBR28_ses-01_task-${task}_outliers.csv"
+outlier_summary="${derivativesDir}/tvns_ses-01_task-${task}_outliers.csv"
 echo "SubID,Run,Number_of_outliers,Percent_outliers" > "$outlier_summary"
 
 # Loop through subjects and runs
 while read -r subj; do
   for run in 1 2; do
     subPath="${derivativesDir}/sub-${subj}/ses-01/func"
-    subFile="${subPath}/sub-${subj}_ses-01_task-${task}_run-00${run}_desc-confounds_timeseries.tsv"
+    subFile="${subPath}/sub-${subj}_ses-01_task-${task}_run-0${run}_desc-confounds_timeseries.tsv"
 
     if [ -f "$subFile" ]; then
 
@@ -30,7 +30,7 @@ while read -r subj; do
         num_outliers=$(echo "$outlier_cols" | wc -l)
       else
         num_outliers=0
-        touch "${subPath}/sub-${subj}_ses-01_task-${task}_run-00${run}_outliers.csv"
+        touch "${subPath}/sub-${subj}_ses-01_task-${task}_run-0${run}_outliers.csv"
       fi
 
       percent_outliers=$(echo "scale=2; ($num_outliers/420)*100" | bc)
