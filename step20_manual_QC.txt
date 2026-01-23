@@ -1,0 +1,22 @@
+# We need to get from the logs of step19 which files are missing, when I run 23 January, it had this logs:
+
+(base) phoenix[0]:9_tvns$ ./step19_prepare_for_first_level.sh 
+Processing subject: sub-7T0111CI110124
+  [WARN] Missing motion regressors: /autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep/sub-7T0111CI110124/ses-01/func/sub-7T0111CI110124_ses-01_task-BlockStim_run-01_nuisance_regressors_for_GLM_no_header.txt
+Processing subject: sub-7T0311CI020524
+Processing subject: sub-7T0407CI110824
+  [WARN] Missing stim file: /autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep/sub-7T0407CI110824/ses-01/func/sub-7T0407CI110824_ses-01_task-ContinuousStim_run-01_bold_stim.txt
+  [WARN] Missing stim file: /autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep/sub-7T0407CI110824/ses-01/func/sub-7T0407CI110824_ses-01_task-BlockStim_run-01_bold_stim.txt
+  [WARN] Missing stim file: /autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep/sub-7T0407CI110824/ses-01/func/sub-7T0407CI110824_ses-01_task-rest_run-01_bold_stim.txt
+Processing subject: sub-7T0504CI020623
+Processing subject: sub-7T1011HC020524
+Processing subject: sub-7T1808CI062123
+Processing subject: sub-7T1813CI071624
+Processing subject: sub-7T1911CI071223
+  [WARN] Missing stim file: /autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep/sub-7T1911CI071223/ses-01/func/sub-7T1911CI071223_ses-01_task-ContinuousStim_run-01_bold_stim.txt
+  [WARN] Missing stim file: /autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep/sub-7T1911CI071223/ses-01/func/sub-7T1911CI071223_ses-01_task-BlockStim_run-01_bold_stim.txt
+  [WARN] Missing stim file: /autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep/sub-7T1911CI071223/ses-01/func/sub-7T1911CI071223_ses-01_task-rest_run-01_bold_stim.txt
+Done. Outputs in: /autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/8_first_level
+
+# So I am running fmriprep again for Block sub-7T0111CI110124, and I mannually copied the sub 7T407 and 7T1911, something down the pipeline didn't work to copy the stimulus txt to the folder fmriprep in the derivatives (mostly because of name convention and the date originally is missing in the raw data from roberta)
+# Copied mannualy to the folder "8_first_level"
