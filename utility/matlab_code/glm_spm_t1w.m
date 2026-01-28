@@ -98,25 +98,28 @@ for i = 1:numel(sublist)
         mask_nii_local = erase(mask_gz_local, '.gz');
         if ~exist(mask_nii_local,'file'), gunzip(mask_gz_local); end
 
-        % Skullstrip BEFORE smoothing
-        brainmasked_nii = fullfile(Workdir, sprintf('bm_%s', basename(bold_nii_local)));
-        if ~exist(brainmasked_nii,'file')
-            apply_mask_4d(bold_nii_local, mask_nii_local, brainmasked_nii);
+
+        % Reslice mask into BOLD space (for analysis mask later)
+        mask_in_bold = fullfile(Workdir, ['mb_' basename(mask_nii_local)]);
+        if ~exist(mask_in_bold,'file')
+            mask_in_bold = coreg_reslice_mask_to_bold(mask_nii_local, bold_nii_local, mask_in_bold);
         end
 
-        % Smooth brainmasked data
-        scans_bm = cellstr(spm_select('expand', brainmasked_nii));
-        [~,n,e] = fileparts(brainmasked_nii);
-        smoothed_nii = fullfile(Workdir, [smooth_prefix n e]);  % e.g., s3bm_*.nii
+        % IMPORTANT: smooth the ORIGINAL bold (not masked)
+        scans_bold = cellstr(spm_select('expand', bold_nii_local));
+        [~,n,e] = fileparts(bold_nii_local);
+        smoothed_nii = fullfile(Workdir, [smooth_prefix n e]);  % e.g., s3sub-...bold.nii
+
         if ~exist(smoothed_nii,'file')
             matlabbatch = [];
-            matlabbatch{1}.spm.spatial.smooth.data = scans_bm;
+            matlabbatch{1}.spm.spatial.smooth.data = scans_bold;
             matlabbatch{1}.spm.spatial.smooth.fwhm = smooth_fwhm;
             matlabbatch{1}.spm.spatial.smooth.dtype = 0;
             matlabbatch{1}.spm.spatial.smooth.im = 0;
             matlabbatch{1}.spm.spatial.smooth.prefix = smooth_prefix;
             spm_jobman('run', matlabbatch);
         end
+
         scans_sm = cellstr(spm_select('expand', smoothed_nii));
 
         % ------------------------------------------------------------
@@ -148,7 +151,7 @@ for i = 1:numel(sublist)
 
         % ------------------------------------------------------------
         % 3) Nuisance regressors (motion + outliers ONLY)
-        %    (No respiration: already RetroICOR'ed)
+        %    (No respiration: already RetroICORed)
         % ------------------------------------------------------------
         motion_file = fullfile(motion_dir, sprintf('%s_ses-%s_task-%s_run-%s_motion_regressors.txt', subj_tag, ses, task, run));
         if ~exist(motion_file,'file')
@@ -181,8 +184,8 @@ for i = 1:numel(sublist)
 
         matlabbatch{1}.spm.stats.fmri_spec.volt   = 1;
         matlabbatch{1}.spm.stats.fmri_spec.global = 'None';
-        matlabbatch{1}.spm.stats.fmri_spec.mthresh = 0.8;
-        matlabbatch{1}.spm.stats.fmri_spec.mask = {''};
+        matlabbatch{1}.spm.stats.fmri_spec.mask = {mask_in_bold};  % explicit mask
+        matlabbatch{1}.spm.stats.fmri_spec.mthresh = 0;            % reduce implicit masking impact
         matlabbatch{1}.spm.stats.fmri_spec.cvi  = 'AR(1)';
 
         spm_jobman('run', matlabbatch);
@@ -335,4 +338,59 @@ function apply_mask_4d(bold_nii, mask_nii, out_nii)
         Y = Y .* M;
         spm_write_vol(Vo(k), Y);
     end
+end
+
+function out_mask = coreg_reslice_mask_to_bold(mask_nii, bold_nii, out_mask)
+    % Coregister+reslice mask into BOLD space (grid + header geometry).
+    % Uses nearest-neighbor interpolation to preserve binary nature.
+    %
+    % mask_nii: path to mask (3D)
+    % bold_nii: path to BOLD (4D or 3D); we use first volume as reference
+    % out_mask: desired output filename (in same folder typically)
+
+    % Reference should be a single volume; use first volume if 4D
+    Vb = spm_vol(bold_nii);
+    ref_vol = [Vb(1).fname ',' num2str(Vb(1).n(1))];  % "file.nii,1"
+
+    % Run coregister (estimate) + reslice (write) using batch
+    matlabbatch = [];
+    matlabbatch{1}.spm.spatial.coreg.estwrite.ref    = {ref_vol};
+    matlabbatch{1}.spm.spatial.coreg.estwrite.source = {mask_nii};
+    matlabbatch{1}.spm.spatial.coreg.estwrite.other  = {''};
+
+    % Estimation options (reasonable defaults)
+    matlabbatch{1}.spm.spatial.coreg.estwrite.eoptions.cost_fun = 'nmi';
+    matlabbatch{1}.spm.spatial.coreg.estwrite.eoptions.sep      = [4 2];
+    matlabbatch{1}.spm.spatial.coreg.estwrite.eoptions.tol      = ...
+        [0.02 0.02 0.02 0.001 0.001 0.001 0.01 0.01 0.01 0.001 0.001 0.001];
+    matlabbatch{1}.spm.spatial.coreg.estwrite.eoptions.fwhm     = [7 7];
+
+    % Reslice options: NN interp for masks
+    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.interp   = 0; % nearest neighbor
+    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.wrap     = [0 0 0];
+    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.mask     = 0;
+    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix   = 'r';
+
+    spm_jobman('run', matlabbatch);
+
+    % SPM writes resliced source with prefix 'r' in same folder as mask_nii
+    [mpath,mname,mext] = fileparts(mask_nii);
+    produced = fullfile(mpath, ['r' mname mext]);
+
+    if ~exist(produced,'file')
+        error('Expected resliced mask not found: %s', produced);
+    end
+
+    % Move/copy to requested output name (keeps workdir tidy)
+    if ~strcmp(produced, out_mask)
+        copyfile(produced, out_mask);
+    end
+
+    % Re-binarize after reslicing (safety)
+    Vm = spm_vol(out_mask);
+    Y  = spm_read_vols(Vm);
+    Y  = double(Y > 0.5);
+    spm_write_vol(Vm, Y);
+
+    out_mask = out_mask;
 end
