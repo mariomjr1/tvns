@@ -5,7 +5,7 @@ set -euo pipefail
 # Paths
 # =========================
 input_folder="/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/fmriprep"
-output_folder="/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/8_first_level"
+output_folder="/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/8_first_level_vanilla"
 
 sublist="SubjectListfmriprep.txt"
 ses="01"
