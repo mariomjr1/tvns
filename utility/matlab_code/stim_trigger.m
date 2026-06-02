@@ -2,8 +2,8 @@
 clearvars
 
 %% Paths
-source = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/0_physiodata_raw_from_roberta';
-dest   = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/derivatives/spm/6_stimtrigger';
+source = '/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata/derivatives/physio/0_raw_from_roberta';
+dest   = '/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata/derivatives/physio/6_stimtrigger';
 
 %% Parameters
 sr = 1000;   % sampling rate (Hz)

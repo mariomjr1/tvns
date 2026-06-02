@@ -13,7 +13,7 @@ patient_ID=$1
 main_script_path=/autofs/cluster/petcore/PET_computer_backup/brainPET_code/Aether-Mirror
 
 # this assumes 'standard' data organisation
-working_directory_path=/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/rawdata
+working_directory_path=/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/rawdata
 
 mkdir -p $working_directory_path/$1
 

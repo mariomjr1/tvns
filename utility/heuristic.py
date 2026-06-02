@@ -1,3 +1,4 @@
+import datetime
 import os
 
 
@@ -123,9 +124,24 @@ def infotodict(seqinfo):
     if len(info[func_task_continuous_stim]) != 1: msg.append('WARNING: Missing correct number of func_task_continuous_stim runs')
 
 
-    # If there is an error, a message will be generated and no NIfTI files will be generated for the subject.
+    # Print warnings prominently (GUI console tags lines containing "WARNING" in yellow)
+    # and append to a persistent log — but do NOT abort so conversion continues.
     if msg:
-       print('\n'.join(msg))
+        patient_id = seqinfo[0].patient_id if seqinfo else "unknown"
+        for m in msg:
+            print(f"WARNING [{patient_id}]: {m}")
+
+        # Append to heuristic_warnings.log in the scripts root (parent of utility/)
+        log_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "heuristic_warnings.log",
+        )
+        timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+        with open(log_path, "a") as lf:
+            lf.write(f"\n[{timestamp}] subject={patient_id}\n")
+            for m in msg:
+                lf.write(f"  {m}\n")
+        print(f"WARNING: sequence mismatches logged to {log_path}")
 
 
     return info

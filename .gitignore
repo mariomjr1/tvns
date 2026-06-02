@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# GUI runtime state
+pipeline_state.json
+heuristic_warnings.log
+
+# Archives / scratch
+*.zip
