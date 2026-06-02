@@ -74,7 +74,7 @@ BIDS_SUBJ="$2"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 SOURCEDATA="${3:-/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata}"
-PHYSIOPARSE_DIR="${4:-${SCRIPT_DIR}/../physioparse}"
+PHYSIOPARSE_DIR="${4:-${SCRIPT_DIR}/utility/physioparse}"
 PYTHON="${5:-python3}"
 
 echo "============================================"
@@ -140,10 +140,12 @@ if [ -d "${heudiconv_root}" ]; then
         old_name=$(basename "${hdir}")
         old_norm=$(echo "${old_name}" | tr -d '_' | tr '[:upper:]' '[:lower:]')
         if [ "${old_norm}" = "${bids_norm}" ]; then
-            candidate="${hdir}info/dicominfo.tsv"
-            if [ -f "${candidate}" ]; then
+            # heudiconv with -ss 01 writes dicominfo_ses-01.tsv; glob to be safe
+            candidate=$(ls "${hdir}info/"dicominfo_ses-01.tsv \
+                           "${hdir}info/"dicominfo*.tsv 2>/dev/null | head -1)
+            if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then
                 dicominfo_tsv="${candidate}"
-                echo " Found dicominfo.tsv: ${candidate}"
+                echo " Found dicominfo: ${candidate}"
                 echo "   (matched '${old_name}' → '${BIDS_SUBJ}' by normalised name)"
                 break
             fi
@@ -209,9 +211,12 @@ echo "============================================"
 echo " Step 1: Pseudotime mapping"
 echo "============================================"
 
-# step01_times_acquisition.sh expects: <folder> <mat_filename> [python_exe]
+# step01_times_acquisition.sh: <json_dir> <mat_file> <output_dir> [python_exe]
+# The wrapper assembles JSONs into work_dir, so json_dir = work_dir; the .mat is
+# the symlinked full path; output also goes to work_dir.
+# (This wrapper assumes Classic .mat format; use the GUI for Block1.)
 bash "${PHYSIOPARSE_DIR}/step01_times_acquisition.sh" \
-    "${work_dir}" "${mat_basename}" "${PYTHON}"
+    "${work_dir}" "${mat_link}" "${work_dir}" "${PYTHON}"
 
 if [ ! -f "${work_dir}/pseudotime_mapping.json" ]; then
     echo "ERROR: Step 1 failed — pseudotime_mapping.json not created."

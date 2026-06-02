@@ -617,9 +617,19 @@ class SequenceViewerPanel(ttk.Frame):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(3, weight=1)
 
+    @staticmethod
+    def _dicominfo_in(info_dir: Path):
+        """Return the dicominfo TSV in info_dir (prefers ses-01), or None.
+        heudiconv with -ss 01 names it dicominfo_ses-01.tsv, else dicominfo.tsv."""
+        hits = sorted(info_dir.glob("dicominfo*.tsv"))
+        if not hits:
+            return None
+        ses = [h for h in hits if "ses-01" in h.name]
+        return ses[0] if ses else hits[0]
+
     def _tsv_path(self, subj):
         sd = self._cfg["sourcedata"].get().strip()
-        return Path(sd) / ".heudiconv" / subj / "info" / "dicominfo.tsv"
+        return self._dicominfo_in(Path(sd) / ".heudiconv" / subj / "info")
 
     def _scan(self):
         sd = self._cfg["sourcedata"].get().strip()
@@ -635,7 +645,7 @@ class SequenceViewerPanel(ttk.Frame):
             return
         subjects = sorted(
             p.name for p in hh.iterdir()
-            if p.is_dir() and (p / "info" / "dicominfo.tsv").exists()
+            if p.is_dir() and self._dicominfo_in(p / "info") is not None
         )
         self._combo["values"] = subjects
         if subjects:
@@ -647,8 +657,11 @@ class SequenceViewerPanel(ttk.Frame):
         if not subj:
             return
         tsv = self._tsv_path(subj)
-        if not tsv.is_file():
-            messagebox.showwarning("Not found", f"dicominfo.tsv not found:\n{tsv}")
+        if tsv is None or not tsv.is_file():
+            messagebox.showwarning(
+                "Not found",
+                f"dicominfo*.tsv not found in:\n"
+                f"{self._cfg['sourcedata'].get()}/.heudiconv/{subj}/info/")
             return
         self._tv.delete(*self._tv.get_children())
         cols = [c for c, _ in self._COLS]
@@ -1864,7 +1877,7 @@ class _PhysioSetupTab(ttk.Frame):
     def __init__(self, parent, cfg: dict,
                  mat_var: tk.StringVar, subj_var: tk.StringVar,
                  physioparse_var: tk.StringVar, work_var: tk.StringVar,
-                 fmt_var: tk.StringVar, **kwargs):
+                 fmt_var: tk.StringVar, oldname_var: tk.StringVar, **kwargs):
         super().__init__(parent, padding=14, **kwargs)
         self._cfg     = cfg
         self._mat_var = mat_var
@@ -1872,6 +1885,7 @@ class _PhysioSetupTab(ttk.Frame):
         self._pp_var  = physioparse_var
         self._work    = work_var
         self._fmt     = fmt_var
+        self._oldname = oldname_var
 
         ttk.Label(self, text="Physio Pipeline Setup",
                   font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 4))
@@ -1916,6 +1930,22 @@ class _PhysioSetupTab(ttk.Frame):
         ttk.Label(subj_frame, text="(e.g. sub-7T1019HC042726 — auto-scanned from sourcedata)",
                   foreground="gray").pack(anchor="w", pady=(2, 0))
 
+        # Old (.heudiconv) name — used to locate dicominfo_ses-01.tsv.
+        # .heudiconv keeps the ORIGINAL SubjectList.txt name (with underscores),
+        # not the BIDS name, so it must be selected/confirmed here.
+        old_row = ttk.Frame(subj_frame)
+        old_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(old_row, text="Old name (.heudiconv):", width=18, anchor="w").pack(side="left")
+        self._old_combo = ttk.Combobox(old_row, textvariable=self._oldname, width=32)
+        self._old_combo.pack(side="left", padx=(0, 6))
+        ttk.Button(old_row, text="↻ Scan", command=self._scan_heudiconv).pack(side="left")
+        ttk.Label(subj_frame,
+                  text="(e.g. 7T1019HC_042726 — the SubjectList.txt name; locates "
+                       "sourcedata/.heudiconv/<name>/info/dicominfo_ses-01.tsv)",
+                  foreground="gray", wraplength=560).pack(anchor="w", pady=(2, 0))
+        # Auto-pick the matching .heudiconv folder when the BIDS subject changes
+        self._subj.trace_add("write", lambda *_: self._autopick_oldname())
+
         # ── Paths ──────────────────────────────────────────────────────────────
         paths_frame = ttk.LabelFrame(self, text="Paths", padding=(8, 4))
         paths_frame.pack(fill="x", pady=(0, 8))
@@ -1946,6 +1976,36 @@ class _PhysioSetupTab(ttk.Frame):
         self._combo["values"] = subjects
         if subjects and not self._subj.get():
             self._subj.set(subjects[0])
+        self._scan_heudiconv()
+
+    def _heudiconv_names(self):
+        sd = self._cfg["sourcedata"].get().strip()
+        root = Path(sd) / ".heudiconv" if sd else None
+        if not root or not root.is_dir():
+            return []
+        return sorted(d.name for d in root.iterdir()
+                      if d.is_dir() and not d.name.startswith("."))
+
+    def _scan_heudiconv(self):
+        names = self._heudiconv_names()
+        self._old_combo["values"] = names
+        self._autopick_oldname()
+
+    def _autopick_oldname(self):
+        """If the old name isn't a valid .heudiconv folder, pick the one whose
+        normalised form (strip '_', lowercase) matches the BIDS subject."""
+        names = self._heudiconv_names()
+        cur = self._oldname.get().strip()
+        if cur in names:
+            return  # user already has a valid selection
+        subj = self._subj.get().strip()
+        if not subj:
+            return
+        bids_norm = subj.replace("sub-", "").replace("_", "").lower()
+        for n in names:
+            if n.replace("_", "").lower() == bids_norm:
+                self._oldname.set(n)
+                return
 
     def _update_work(self):
         sd   = self._cfg["sourcedata"].get().strip()
@@ -2021,13 +2081,14 @@ class PhysioPanel(ttk.Frame):
         super().__init__(parent, padding=(6, 6), **kwargs)
 
         # ── Shared state vars ─────────────────────────────────────────────────
-        self._mat_var  = tk.StringVar()
-        self._subj_var = tk.StringVar()
-        self._pp_var   = tk.StringVar(
-            value=str(Path(SCRIPTS_ROOT).parent / "physioparse"))
-        self._work_var = tk.StringVar()
-        self._fmt_var  = tk.StringVar(value="classic")
-        self._cfg      = cfg
+        self._mat_var     = tk.StringVar()
+        self._subj_var    = tk.StringVar()
+        self._pp_var      = tk.StringVar(
+            value=str(SCRIPTS_ROOT / "utility" / "physioparse"))
+        self._work_var    = tk.StringVar()
+        self._fmt_var     = tk.StringVar(value="classic")
+        self._oldname_var = tk.StringVar()   # .heudiconv folder name (old SubjectList name)
+        self._cfg         = cfg
 
         ttk.Label(self, text="Step 03 — Physioparse",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
@@ -2037,7 +2098,8 @@ class PhysioPanel(ttk.Frame):
 
         # Setup tab
         setup_tab = _PhysioSetupTab(nb, cfg, self._mat_var, self._subj_var,
-                                    self._pp_var, self._work_var, self._fmt_var)
+                                    self._pp_var, self._work_var, self._fmt_var,
+                                    self._oldname_var)
 
         # Step 1 – pseudotime mapping
         s1_tab = _PhysioStepTab(
@@ -2109,16 +2171,82 @@ class PhysioPanel(ttk.Frame):
             raise ValueError("Working directory is empty — set sourcedata + subject.")
         return mat, subj, pp, work
 
+    def _bids_func_dir(self, subj):
+        """BIDS func dir holding the *_bold.json sidecars for this subject."""
+        sd = self._cfg["sourcedata"].get().strip()
+        if not sd:
+            raise ValueError("Set the sourcedata path in Setup.")
+        d = str(Path(sd) / subj / "ses-01" / "func")
+        if not os.path.isdir(d):
+            raise ValueError(
+                f"BIDS func directory not found:\n{d}\n"
+                "Run step01 (heudiconv BIDS conversion) first.")
+        return d
+
+    def _find_dicominfo(self, subj):
+        """Locate dicominfo_ses-*.tsv in sourcedata/.heudiconv/<old_name>/info/.
+
+        .heudiconv keeps the OLD SubjectList.txt name (e.g. 7T1019HC_042726),
+        not the BIDS name. The folder is taken from the "Old name (.heudiconv)"
+        field in Setup if set; otherwise it's matched to the BIDS subject by
+        normalising both (strip '_', lowercase).
+
+        heudiconv run with sessions (-ss 01) names the file dicominfo_ses-01.tsv,
+        so we glob dicominfo*.tsv and prefer the ses-01 one. Returns '' if none.
+        """
+        sd = self._cfg["sourcedata"].get().strip()
+        if not sd:
+            return ""
+        heudiconv_root = Path(sd) / ".heudiconv"
+        if not heudiconv_root.is_dir():
+            return ""
+
+        # 1. Explicit old name selected in Setup
+        candidate_dirs = []
+        old = self._oldname_var.get().strip()
+        if old:
+            candidate_dirs.append(heudiconv_root / old)
+
+        # 2. Fall back to normalised-name matching
+        if not candidate_dirs:
+            bids_norm = subj.replace("sub-", "").replace("_", "").lower()
+            for hdir in heudiconv_root.iterdir():
+                if hdir.is_dir() and hdir.name.replace("_", "").lower() == bids_norm:
+                    candidate_dirs.append(hdir)
+
+        for d in candidate_dirs:
+            info = d / "info"
+            if not info.is_dir():
+                continue
+            hits = sorted(info.glob("dicominfo*.tsv"))
+            if hits:
+                ses = [h for h in hits if "ses-01" in h.name]
+                return str(ses[0] if ses else hits[0])
+        return ""
+
     def _build_step1_cmd(self):
         mat, subj, pp, work = self._validate()
-        mat_base = Path(mat).name
+
+        # JSONs are read directly from the BIDS func dir (no copying):
+        #   <sourcedata>/<subject>/ses-01/func
+        sd = self._cfg["sourcedata"].get().strip()
+        if not sd:
+            raise ValueError("Set the sourcedata path in Setup.")
+        json_dir = str(Path(sd) / subj / "ses-01" / "func")
+        if not os.path.isdir(json_dir):
+            raise ValueError(
+                f"BIDS func directory not found:\n{json_dir}\n"
+                "Run step01 (heudiconv BIDS conversion) for this subject first.")
+
         # Classic vs Block1: different bash scripts
         script = (
             "step01_times_acquisition.sh"
             if self._fmt_var.get() == "classic"
             else "step01b_times_acquisition_block1.sh"
         )
-        cmd = ["bash", str(Path(pp) / script), work, mat_base, self._python()]
+        # New signature: <json_dir> <mat_file (full path)> <output_dir> [python]
+        cmd = ["bash", str(Path(pp) / script),
+               json_dir, mat, work, self._python()]
         return cmd, work
 
     def _build_step2_cmd(self):
@@ -2126,14 +2254,22 @@ class PhysioPanel(ttk.Frame):
         mapping = str(Path(work) / "pseudotime_mapping.json")
         if not os.path.isfile(mapping):
             raise ValueError("pseudotime_mapping.json not found.\nRun Step 1 first.")
-        # step02 needs _common.py on PYTHONPATH
-        env = os.environ.copy()
-        env["PYTHONPATH"] = f"{pp}{os.pathsep}{env.get('PYTHONPATH', '')}"
-        mat_link = str(Path(work) / Path(mat).name)
-        script   = str(Path(pp) / "step02_plot_pseudotime_quality.py")
-        cmd = [self._python(), script,
-               mat_link, mapping,
-               str(Path(work) / "pseudotime_plot.png")]
+        json_dir  = self._bids_func_dir(subj)
+        dicominfo = self._find_dicominfo(subj)
+        if not dicominfo:
+            raise ValueError(self._dicominfo_err(subj))
+        # Classic vs Block1: different plot scripts
+        script_name = (
+            "step02_plot_pseudotime_quality.py"
+            if self._fmt_var.get() == "classic"
+            else "step02b_plot_pseudotime_quality_block1.py"
+        )
+        # The .mat is the manually-selected file (full path) — not copied into work.
+        cmd = [self._python(), str(Path(pp) / script_name),
+               mat, mapping,
+               str(Path(work) / "pseudotime_plot.png"),
+               "--json-dir", json_dir,
+               "--dicominfo", dicominfo]
         return cmd, work
 
     def _build_step3_cmd(self):
@@ -2143,14 +2279,31 @@ class PhysioPanel(ttk.Frame):
             raise ValueError("pseudotime_mapping.json not found.\nRun Step 1 first.")
         parsed_dir = str(Path(work) / "parsed")
         Path(parsed_dir).mkdir(parents=True, exist_ok=True)
+        json_dir  = self._bids_func_dir(subj)
+        dicominfo = self._find_dicominfo(subj)
+        if not dicominfo:
+            raise ValueError(self._dicominfo_err(subj))
         # Classic vs Block1: different Python scripts
         script_name = (
             "step03_parse.py"
             if self._fmt_var.get() == "classic"
             else "step03b_parse_block1.py"
         )
-        cmd = [self._python(), str(Path(pp) / script_name), work, parsed_dir]
+        cmd = [self._python(), str(Path(pp) / script_name), work, parsed_dir,
+               "--json-dir", json_dir,
+               "--dicominfo", dicominfo]
         return cmd, work
+
+    def _dicominfo_err(self, subj):
+        sd = self._cfg["sourcedata"].get().strip()
+        old = self._oldname_var.get().strip()
+        return (
+            "dicominfo_ses-01.tsv could not be located.\n\n"
+            f"Looked under: {sd}/.heudiconv/\n"
+            f"Old name (.heudiconv): {old or '(not set — using normalised match)'}\n\n"
+            "Set the correct 'Old name (.heudiconv)' in the Physio Setup tab "
+            "(the SubjectList.txt name, e.g. 7T1019HC_042726). Without it the "
+            "sequence durations fall back to 120 s and the QC timeline is wrong.")
 
     def _build_step4_cmd(self):
         mat, subj, pp, work = self._validate()
@@ -3746,6 +3899,9 @@ class App(tk.Tk):
         header.pack(fill="x")
         ttk.Label(header, text="TVNS BIDS Pipeline",
                   font=("Helvetica", 16, "bold")).pack(side="left")
+        # Save / Load project configuration (all path fields across every panel)
+        ttk.Button(header, text="💾 Save config", command=self._save_config).pack(side="left", padx=(16, 2))
+        ttk.Button(header, text="📂 Load config", command=self._load_config).pack(side="left", padx=2)
         ttk.Label(header, text=str(SCRIPTS_ROOT),
                   foreground="gray", font=("Menlo", 10)).pack(side="right")
         ttk.Separator(self).pack(fill="x", padx=10, pady=6)
@@ -3837,9 +3993,110 @@ class App(tk.Tk):
         nav.add("08  Second-level",       t_step08)
         nav.add("∷  Heuristic",           t_heur,   section="Tools")
 
+        # Expose console/status so Save/Load config can report progress
+        self._console    = console
+        self._status_var = status_var
+
         console.append("TVNS BIDS Pipeline GUI ready.", "ok")
         console.append(f"Scripts root: {SCRIPTS_ROOT}", "dim")
         console.append(f"Pipeline state: {SCRIPTS_ROOT / 'pipeline_state.json'}", "dim")
+
+    # ── Project configuration save/load ───────────────────────────────────────
+
+    def _collect_path_vars(self) -> dict:
+        """Walk the whole widget tree and collect every Entry / Combobox /
+        Checkbutton / Radiobutton variable, keyed by its Tk variable name.
+
+        Variable names (PY_VARn) are assigned in widget-creation order, which is
+        deterministic for a given app version — so they round-trip reliably
+        between Save and Load on the same build.
+        """
+        found: dict = {}
+
+        def walk(w):
+            cls = w.winfo_class()
+            try:
+                if cls in ("TEntry", "Entry", "TCombobox"):
+                    name = str(w.cget("textvariable"))
+                    if name:
+                        found[name] = self.getvar(name)
+                elif cls in ("TCheckbutton", "Checkbutton",
+                             "TRadiobutton", "Radiobutton"):
+                    name = str(w.cget("variable"))
+                    if name:
+                        found[name] = self.getvar(name)
+            except tk.TclError:
+                pass
+            for child in w.winfo_children():
+                walk(child)
+
+        walk(self)
+        return found
+
+    def _save_config(self):
+        path = filedialog.asksaveasfilename(
+            title="Save project configuration",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json"), ("All", "*.*")],
+            initialfile="tvns_project_config.json",
+            initialdir=str(SCRIPTS_ROOT),
+        )
+        if not path:
+            return
+        fields = self._collect_path_vars()
+        payload = {
+            "_tvns_config_version": 1,
+            "saved": datetime.datetime.now().isoformat(timespec="seconds"),
+            "fields": fields,
+        }
+        try:
+            with open(path, "w") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as e:
+            messagebox.showerror("Save failed", str(e))
+            return
+        self._console.append(f"[Config] Saved {len(fields)} fields → {path}", "ok")
+        self._status_var.set(f"Config saved → {Path(path).name}")
+        messagebox.showinfo("Saved", f"Saved {len(fields)} fields to:\n{path}")
+
+    def _load_config(self):
+        path = filedialog.askopenfilename(
+            title="Load project configuration",
+            filetypes=[("JSON", "*.json"), ("All", "*.*")],
+            initialdir=str(SCRIPTS_ROOT),
+        )
+        if not path:
+            return
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Load failed", str(e))
+            return
+        fields = data.get("fields", data)
+        if not isinstance(fields, dict):
+            messagebox.showerror("Load failed", "Unrecognised config file format.")
+            return
+
+        def apply():
+            n = 0
+            for name, val in fields.items():
+                try:
+                    self.setvar(name, val)
+                    n += 1
+                except tk.TclError:
+                    pass
+            return n
+
+        # Apply once (fires traces that recompute derived fields), then again
+        # after idle so the saved values win over any trace-driven recomputation.
+        n = apply()
+        self.after_idle(apply)
+        self._console.append(f"[Config] Loaded {n} fields ← {path}", "ok")
+        self._status_var.set(f"Config loaded ← {Path(path).name}")
+        messagebox.showinfo("Loaded",
+                            f"Restored {n} fields from:\n{path}\n\n"
+                            "All path fields across the panels have been repopulated.")
 
 
 if __name__ == "__main__":
