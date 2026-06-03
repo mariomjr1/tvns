@@ -20,6 +20,7 @@ class ScriptRunner:
         self._root = root
         self._q = queue.Queue()
         self._busy = False
+        self._proc = None
         self._poll()
 
     @property
@@ -34,9 +35,17 @@ class ScriptRunner:
             daemon=True,
         ).start()
 
+    def stop(self):
+        """Terminate the currently running process."""
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+            except:
+                pass
+
     def _worker(self, cmd, cwd, on_line, on_done):
         try:
-            proc = subprocess.Popen(
+            self._proc = subprocess.Popen(
                 cmd,
                 cwd=cwd,
                 stdout=subprocess.PIPE,
@@ -44,14 +53,15 @@ class ScriptRunner:
                 text=True,
                 bufsize=1,
             )
-            for raw in proc.stdout:
+            for raw in self._proc.stdout:
                 self._q.put((on_line, raw.rstrip("\n")))
-            proc.wait()
-            self._q.put((on_done, proc.returncode))
+            self._proc.wait()
+            self._q.put((on_done, self._proc.returncode))
         except Exception as exc:
             self._q.put((on_line, f"[runner] ERROR: {exc}"))
             self._q.put((on_done, 1))
         finally:
+            self._proc = None
             self._busy = False
 
     def _poll(self):

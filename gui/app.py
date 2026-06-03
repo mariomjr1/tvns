@@ -32,7 +32,23 @@ _DEFAULTS = {
     "heuristic":    str(SCRIPTS_ROOT / "utility" / "heuristic.py"),
     "env_activate": "/autofs/cluster/vagabond/USERS/MARIO/Packages/env/heudiconv/bin/activate",
     "subjlist":     str(SCRIPTS_ROOT / "utility" / "SubjectList.txt"),
+    # ── Common tool paths, shared by every step (set once in Setup) ───────────
+    "fmriprep":     "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata/derivatives/fmriprep",
+    "spm_dir":      "/autofs/cluster/vagabond/USERS/MARIO/Packages/matlab/spm12",
+    "matlab_exe":   "matlab",
+    "matlab_code":  str(SCRIPTS_ROOT / "utility" / "matlab_code"),
+    "env_script":   str(SCRIPTS_ROOT / "utility" / "fmriprep_env.sh"),
+    "python_exe":   sys.executable,
+    "retro_code":   str(SCRIPTS_ROOT / "utility" / "retroicor"),
+    "rdeco_code":   str(SCRIPTS_ROOT / "utility" / "r-deco-master"),
 }
+
+
+def numbered_subdirs(names):
+    """Map names to zero-padded numbered folder names, e.g.
+    ['stim','motion','bold'] -> {'stim':'01_stim', 'motion':'02_motion', 'bold':'03_bold'}.
+    So multi-step procedures create ordered, self-documenting output folders."""
+    return {n: f"{i:02d}_{n}" for i, n in enumerate(names, start=1)}
 
 
 # ── Shared widgets ─────────────────────────────────────────────────────────────
@@ -83,7 +99,7 @@ class Console(ttk.Frame):
         "error": "#f44747",
         "warn":  "#dcdcaa",
         "ok":    "#4ec9b0",
-        "info":  "#9cdcfe",
+        "info":  "#ff4444",
         "dim":   "#6a6a6a",
     }
 
@@ -396,6 +412,27 @@ class SetupPanel(ttk.Frame):
             PathRow(paths_frame, label, mode=mode, filetypes=filetypes,
                     var=cfg[key]).pack(fill="x", pady=2)
 
+        # ── Common tool paths (shared by every step) ────────────────────────
+        tools_frame = ttk.LabelFrame(
+            self, text="Common tool paths  (set once — used by all steps)", padding=(10, 6))
+        tools_frame.pack(fill="x", pady=(0, 10))
+        tool_rows = [
+            ("fMRIPrep derivatives:", "fmriprep",    "dir",  None),
+            ("SPM12 dir:",            "spm_dir",     "dir",  None),
+            ("MATLAB exe:",           "matlab_exe",  "file", None),
+            ("MATLAB code dir:",      "matlab_code", "dir",  None),
+            ("Environment script:",   "env_script",  "file", [("Shell", "*.sh"), ("All", "*.*")]),
+            ("Python exe:",           "python_exe",  "file", None),
+            ("RETROICOR code dir:",   "retro_code",  "dir",  None),
+            ("R-DECO code dir:",      "rdeco_code",  "dir",  None),
+        ]
+        for label, key, mode, filetypes in tool_rows:
+            PathRow(tools_frame, label, mode=mode, filetypes=filetypes,
+                    var=cfg[key], label_width=22).pack(fill="x", pady=2)
+        ttk.Label(tools_frame,
+                  text="fMRIPrep auto-derives from BIDS sourcedata; override if needed.",
+                  foreground="gray").pack(anchor="w", pady=(2, 0))
+
         # ── Subject list ───────────────────────────────────────────────────
         subj_frame = ttk.LabelFrame(self, text="Subject List", padding=(10, 6))
         subj_frame.pack(fill="both", expand=True)
@@ -431,8 +468,8 @@ class Step00Panel(ttk.Frame):
         # Paths summary
         summary = ttk.LabelFrame(self, text="Active paths (from Setup)", padding=(8, 4))
         summary.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        self._lbl_raw  = ttk.Label(summary, foreground="#9cdcfe")
-        self._lbl_subj = ttk.Label(summary, foreground="#9cdcfe")
+        self._lbl_raw  = ttk.Label(summary, foreground="#ff4444")
+        self._lbl_subj = ttk.Label(summary, foreground="#ff4444")
         self._lbl_raw.pack(anchor="w")
         self._lbl_subj.pack(anchor="w")
         cfg["out_path"].trace_add("write",  lambda *_: self._update_labels())
@@ -458,6 +495,8 @@ class Step00Panel(ttk.Frame):
         btn_row.grid(row=5, column=0, sticky="w")
         self._run_btn = ttk.Button(btn_row, text="▶  Run Step 00", command=self._run)
         self._run_btn.pack(side="left")
+        self._stop_btn = ttk.Button(btn_row, text="⏹ Stop", command=self._stop, state="disabled")
+        self._stop_btn.pack(side="left", padx=4)
         self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=180)
         self._progress.pack(side="left", padx=12)
 
@@ -526,6 +565,7 @@ class Step00Panel(ttk.Frame):
         self._console.separator()
 
         self._run_btn.config(state="disabled")
+        self._stop_btn.config(state="normal")
         self._progress.start(10)
         self._status.set("Step 00 running…")
 
@@ -538,6 +578,7 @@ class Step00Panel(ttk.Frame):
     def _done(self, rc):
         self._progress.stop()
         self._run_btn.config(state="normal")
+        self._stop_btn.config(state="disabled")
         if rc == 0:
             self._status.set("Step 00 complete ✓")
             self._console.append("[Step 00] Finished successfully.", "ok")
@@ -548,6 +589,10 @@ class Step00Panel(ttk.Frame):
             self._console.append(f"[Step 00] Failed (exit {rc}).", "error")
             if self._state:
                 self._state.update_many(self._last_subjects, "step_00", "failed")
+
+    def _stop(self):
+        """Stop the currently running process."""
+        self._runner.stop()
 
 
 # ── Sequence Viewer ────────────────────────────────────────────────────────────
@@ -715,7 +760,7 @@ class _PassPanel(ttk.Frame):
         # Paths summary
         summary = ttk.LabelFrame(self, text="Active paths (from Setup)", padding=(8, 4))
         summary.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        self._lbl = [ttk.Label(summary, foreground="#9cdcfe") for _ in range(3)]
+        self._lbl = [ttk.Label(summary, foreground="#ff4444") for _ in range(3)]
         for lbl in self._lbl:
             lbl.pack(anchor="w")
         for key in ("out_path", "sourcedata", "heuristic"):
@@ -750,6 +795,8 @@ class _PassPanel(ttk.Frame):
         label = f"▶  Run Pass {pass_num}"
         self._run_btn = ttk.Button(btn_row, text=label, command=self._run)
         self._run_btn.pack(side="left")
+        self._stop_btn = ttk.Button(btn_row, text="⏹ Stop", command=self._stop, state="disabled")
+        self._stop_btn.pack(side="left", padx=4)
         self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=180)
         self._progress.pack(side="left", padx=12)
 
@@ -834,6 +881,7 @@ class _PassPanel(ttk.Frame):
         self._console.separator()
 
         self._run_btn.config(state="disabled")
+        self._stop_btn.config(state="normal")
         self._progress.start(10)
         self._status.set(f"Step 01 {label} running…")
 
@@ -846,6 +894,7 @@ class _PassPanel(ttk.Frame):
     def _done(self, rc):
         self._progress.stop()
         self._run_btn.config(state="normal")
+        self._stop_btn.config(state="disabled")
         label = "Pass 1" if self._pass_num == 1 else "Pass 2"
         step_key = "step_01_p1" if self._pass_num == 1 else "step_01"
         if rc == 0:
@@ -858,6 +907,10 @@ class _PassPanel(ttk.Frame):
             self._console.append(f"[Step 01 {label}] Failed (exit {rc}).", "error")
             if self._state:
                 self._state.update_many(self._last_subjects, step_key, "failed")
+
+    def _stop(self):
+        """Stop the currently running process."""
+        self._runner.stop()
 
 
 # ── Step 01 Panel ──────────────────────────────────────────────────────────────
@@ -925,7 +978,7 @@ class _BIDSValidatorTab(ttk.Frame):
 
         summary = ttk.LabelFrame(self, text="BIDS directory (from Setup)", padding=(8, 4))
         summary.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        self._lbl_sd = ttk.Label(summary, foreground="#9cdcfe")
+        self._lbl_sd = ttk.Label(summary, foreground="#ff4444")
         self._lbl_sd.pack(anchor="w")
         cfg["sourcedata"].trace_add("write", lambda *_: self._update_label())
         self._update_label()
@@ -933,7 +986,7 @@ class _BIDSValidatorTab(ttk.Frame):
         env_row = ttk.Frame(self)
         env_row.grid(row=3, column=0, sticky="ew", pady=(0, 8))
         ttk.Label(env_row, text="Source env (for node/npm):", width=26, anchor="w").pack(side="left")
-        self._env_var = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "fmriprep_env.sh"))
+        self._env_var = cfg["env_script"]
         ttk.Entry(env_row, textvariable=self._env_var).pack(side="left", fill="x", expand=True, padx=(0, 6))
         ttk.Button(env_row, text="Browse…", width=9,
                    command=lambda: self._env_var.set(
@@ -1147,7 +1200,7 @@ class _BIDSConvTab(ttk.Frame):
 
         summary = ttk.LabelFrame(self, text="Active paths (from Setup)", padding=(8, 4))
         summary.grid(row=3, column=0, sticky="ew", pady=(0, 8))
-        self._lbl = [ttk.Label(summary, foreground="#9cdcfe") for _ in range(4)]
+        self._lbl = [ttk.Label(summary, foreground="#ff4444") for _ in range(4)]
         for lbl in self._lbl:
             lbl.pack(anchor="w")
         for key in ("out_path", "sourcedata", "heuristic", "env_activate"):
@@ -1349,6 +1402,8 @@ class _FmriprepTab(ttk.Frame):
         btn_row.pack(fill="x")
         self._run_btn = ttk.Button(btn_row, text="▶  Run fMRIPrep", command=self._run)
         self._run_btn.pack(side="left")
+        self._stop_btn = ttk.Button(btn_row, text="⏹ Stop", command=self._stop, state="disabled")
+        self._stop_btn.pack(side="left", padx=4)
         self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=200)
         self._progress.pack(side="left", padx=12)
 
@@ -1415,6 +1470,7 @@ class _FmriprepTab(ttk.Frame):
         self._console.separator()
 
         self._run_btn.config(state="disabled")
+        self._stop_btn.config(state="normal")
         self._progress.start(10)
         self._status.set("Step 02 (fMRIPrep) running…")
 
@@ -1427,6 +1483,7 @@ class _FmriprepTab(ttk.Frame):
     def _done(self, rc):
         self._progress.stop()
         self._run_btn.config(state="normal")
+        self._stop_btn.config(state="disabled")
         if rc == 0:
             self._status.set("Step 02 (fMRIPrep) complete ✓")
             self._console.append("[Step 02] fMRIPrep finished.", "ok")
@@ -1438,6 +1495,10 @@ class _FmriprepTab(ttk.Frame):
             self._console.append(f"[Step 02] fMRIPrep failed (exit {rc}).", "error")
             if self._state:
                 self._state.update_many(self._last_subjects, "step_02", "failed")
+
+    def _stop(self):
+        """Stop the currently running process."""
+        self._runner.stop()
 
     def _run_qc(self):
         fp_der = self._vars["fp_der"].get()
@@ -1619,7 +1680,7 @@ class Step02Panel(ttk.Frame):
         super().__init__(parent, padding=(6, 6), **kwargs)
 
         fp_subj_var = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "SubjectListBIDS.txt"))
-        fp_env_var  = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "fmriprep_env.sh"))
+        fp_env_var  = cfg["env_script"]
 
         ttk.Label(self, text="Step 02 — fMRIPrep",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
@@ -1956,7 +2017,7 @@ class _PhysioSetupTab(ttk.Frame):
         out_row = ttk.Frame(paths_frame)
         out_row.pack(fill="x", pady=2)
         ttk.Label(out_row, text="Output (auto):", width=20, anchor="w").pack(side="left")
-        self._work_lbl = ttk.Label(out_row, foreground="#9cdcfe")
+        self._work_lbl = ttk.Label(out_row, foreground="#ff4444")
         self._work_lbl.pack(side="left")
 
         self._subj.trace_add("write", lambda *_: self._update_work())
@@ -2351,8 +2412,8 @@ class _FilterPhysioTab(ttk.Frame):
         self._subj_var    = tk.StringVar()
         self._parsed_var  = tk.StringVar()
         self._output_var  = tk.StringVar()
-        self._matlab_var  = tk.StringVar(value="matlab")
-        self._mcode_var   = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "matlab_code"))
+        self._matlab_var  = cfg["matlab_exe"]
+        self._mcode_var   = cfg["matlab_code"]
 
         subj_row = ttk.Frame(paths)
         subj_row.pack(fill="x", pady=2)
@@ -2480,23 +2541,27 @@ class _FilterPhysioTab(ttk.Frame):
 
 
 class _RDecoTab(ttk.Frame):
-    """List preprocessed mats and launch R-DECO in MATLAB."""
+    """List preprocessed mats; launch R-DECO manually OR run it automatically."""
 
     def __init__(self, parent, console: Console, status_var: tk.StringVar,
-                 preproc_dir_var: tk.StringVar, **kwargs):
+                 preproc_dir_var: tk.StringVar, runner: ScriptRunner = None,
+                 cfg: dict = None, **kwargs):
         super().__init__(parent, padding=14, **kwargs)
         self._console     = console
         self._status      = status_var
         self._preproc_dir = preproc_dir_var
+        self._runner      = runner
+        cfg = cfg or {}
 
         ttk.Label(self, text="R-DECO — Cardiac R-peak Annotation",
                   font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
-            text=("Select a *_rpiezo.mat file and launch R-DECO to detect R-peaks.\n"
-                  "In R-DECO: load the file → run detection → correct manually → save as *_rdeco.mat\n"
-                  "in the same folder.  The table below tracks which files are done."),
-            foreground="gray", wraplength=580,
+            text=("Select a sequence, then either Launch R-DECO (manual GUI) or\n"
+                  "Run Auto R-DECO (headless: detect peaks, ectopic removal, remove\n"
+                  "doubled beats > HR threshold, save QC image + *_rdeco.mat).\n"
+                  "The table tracks which files are done."),
+            foreground="gray", wraplength=600,
         ).pack(anchor="w", pady=(0, 10))
 
         # Paths
@@ -2505,13 +2570,40 @@ class _RDecoTab(ttk.Frame):
         PathRow(pf, "Preprocessed dir:", mode="dir",
                 var=self._preproc_dir, label_width=18,
                 on_change=lambda _: self._refresh()).pack(fill="x", pady=2)
-        self._rdeco_var   = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "r-deco-master"))
-        self._matlab_var2 = tk.StringVar(value="matlab")
+        self._rdeco_var   = cfg.get("rdeco_code")  or tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "r-deco-master"))
+        self._mcode_var   = cfg.get("matlab_code") or tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "matlab_code"))
+        self._matlab_var2 = cfg.get("matlab_exe")  or tk.StringVar(value="matlab")
         PathRow(pf, "R-DECO code dir:", mode="dir",
                 var=self._rdeco_var, label_width=18).pack(fill="x", pady=2)
+        PathRow(pf, "MATLAB code dir:", mode="dir",
+                var=self._mcode_var, label_width=18).pack(fill="x", pady=2)
         PathRow(pf, "MATLAB exe:", mode="file",
                 filetypes=[("MATLAB", "matlab*"), ("All", "*.*")],
                 var=self._matlab_var2, label_width=18).pack(fill="x", pady=2)
+
+        # Auto-analysis parameters
+        ap = ttk.LabelFrame(self, text="Auto R-DECO parameters", padding=(10, 6))
+        ap.pack(fill="x", pady=(0, 8))
+        self._fs_var      = tk.StringVar(value="1000")
+        self._envmin_var  = tk.StringVar(value="300")
+        self._envmax_var  = tk.StringVar(value="500")
+        self._hrmax_var   = tk.StringVar(value="150")
+        self._ectopic_var = tk.BooleanVar(value=True)
+        self._inverted_var = tk.BooleanVar(value=False)
+
+        def _erow(parent, label, var, w=7):
+            r = ttk.Frame(parent); r.pack(side="left", padx=(0, 14))
+            ttk.Label(r, text=label).pack(side="left")
+            ttk.Entry(r, textvariable=var, width=w).pack(side="left", padx=(4, 0))
+
+        row1 = ttk.Frame(ap); row1.pack(fill="x", pady=2)
+        _erow(row1, "Resample to (Hz):", self._fs_var)
+        _erow(row1, "Min envelope (ms):", self._envmin_var)
+        _erow(row1, "Max envelope (ms):", self._envmax_var)
+        row2 = ttk.Frame(ap); row2.pack(fill="x", pady=2)
+        _erow(row2, "Delete doubled peaks > HR (bpm):", self._hrmax_var)
+        ttk.Checkbutton(row2, text="Ectopic removal", variable=self._ectopic_var).pack(side="left", padx=(0, 12))
+        ttk.Checkbutton(row2, text="Inverted signal", variable=self._inverted_var).pack(side="left")
 
         # File table
         tv_frame = ttk.Frame(self)
@@ -2536,10 +2628,14 @@ class _RDecoTab(ttk.Frame):
 
         btn_row = ttk.Frame(self)
         btn_row.pack(fill="x")
-        ttk.Button(btn_row, text="↻ Refresh",     command=self._refresh).pack(side="left", padx=(0, 6))
-        ttk.Button(btn_row, text="Launch R-DECO", command=self._launch).pack(side="left")
-        ttk.Label(btn_row, text="(select a row first)",
-                  foreground="gray").pack(side="left", padx=8)
+        ttk.Button(btn_row, text="↻ Refresh",        command=self._refresh).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_row, text="Launch R-DECO",    command=self._launch).pack(side="left", padx=(0, 6))
+        self._auto_btn = ttk.Button(btn_row, text="⚡ Run Auto R-DECO", command=self._run_auto)
+        self._auto_btn.pack(side="left", padx=(0, 6))
+        self._auto_all_btn = ttk.Button(btn_row, text="⚡⚡ Auto all missing", command=self._run_auto_all)
+        self._auto_all_btn.pack(side="left")
+        self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=140)
+        self._progress.pack(side="left", padx=10)
 
         self._preproc_dir.trace_add("write", lambda *_: self._refresh())
         self._refresh()
@@ -2606,6 +2702,107 @@ class _RDecoTab(ttk.Frame):
         except FileNotFoundError:
             messagebox.showerror("Error", f"MATLAB not found: {matlab}")
 
+    # ── Automatic (headless) R-DECO ───────────────────────────────────────────
+
+    def _auto_matlab_cmd(self, stem):
+        """Build the MATLAB -batch command for one sequence's auto analysis."""
+        d      = self._preproc_dir.get().strip()
+        rdeco  = self._rdeco_var.get().strip()
+        mcode  = self._mcode_var.get().strip()
+        rpiezo = os.path.join(d, f"{stem}_rpiezo.mat")
+        out    = os.path.join(d, f"{stem}_rdeco.mat")
+        qc     = os.path.join(d, f"{stem}_rdeco_qc.png")
+        ect    = "true" if self._ectopic_var.get() else "false"
+        inv    = "true" if self._inverted_var.get() else "false"
+        return (
+            f"set(0,'DefaultFigureVisible','off'); "
+            f"addpath('{mcode}'); "
+            f"rdeco_auto_analysis('{rpiezo}','{out}','{qc}','{rdeco}',"
+            f"'Fs',{self._fs_var.get() or 1000},"
+            f"'EnvMin',{self._envmin_var.get() or 300},"
+            f"'EnvMax',{self._envmax_var.get() or 500},"
+            f"'Ectopic',{ect},"
+            f"'HrMaxBpm',{self._hrmax_var.get() or 150},"
+            f"'Inverted',{inv});"
+        )
+
+    def _validate_auto(self):
+        d     = self._preproc_dir.get().strip()
+        rdeco = self._rdeco_var.get().strip()
+        mcode = self._mcode_var.get().strip()
+        if not d or not os.path.isdir(d):
+            raise ValueError(f"Preprocessed directory not found:\n{d}")
+        if not rdeco or not os.path.isdir(rdeco):
+            raise ValueError(f"R-DECO directory not found:\n{rdeco}")
+        if not mcode or not os.path.isdir(mcode):
+            raise ValueError(f"MATLAB code directory not found:\n{mcode}")
+
+    def _run_auto(self):
+        sel = self._tv.selection()
+        if not sel:
+            messagebox.showwarning("No selection", "Select a sequence from the table first.")
+            return
+        try:
+            self._validate_auto()
+        except ValueError as e:
+            messagebox.showerror("Error", str(e)); return
+        self._run_auto_batch([sel[0]])
+
+    def _run_auto_all(self):
+        try:
+            self._validate_auto()
+        except ValueError as e:
+            messagebox.showerror("Error", str(e)); return
+        d = self._preproc_dir.get().strip()
+        stems = []
+        for iid in self._tv.get_children():
+            stem = iid
+            if (os.path.isfile(os.path.join(d, f"{stem}_rpiezo.mat"))
+                    and not os.path.isfile(os.path.join(d, f"{stem}_rdeco.mat"))):
+                stems.append(stem)
+        if not stems:
+            messagebox.showinfo("Nothing to do",
+                                "Every sequence with an RPIEZO file already has an R-DECO result.")
+            return
+        self._run_auto_batch(stems)
+
+    def _run_auto_batch(self, stems):
+        if self._runner is None:
+            messagebox.showerror("Error", "No runner available for auto analysis.")
+            return
+        matlab = self._matlab_var2.get().strip()
+        # Chain all selected sequences in one MATLAB session
+        body = "\n".join(self._auto_matlab_cmd(s) for s in stems)
+        cmd = [matlab, "-nodisplay", "-nosplash", "-batch", body]
+
+        self._console.separator()
+        self._console.append(
+            f"[Auto R-DECO] {len(stems)} sequence(s): {', '.join(stems)}", "info")
+        self._console.separator()
+
+        self._auto_btn.config(state="disabled")
+        self._auto_all_btn.config(state="disabled")
+        self._progress.start(10)
+        self._status.set(f"Auto R-DECO running ({len(stems)})…")
+
+        self._runner.run(
+            cmd=cmd, cwd=self._preproc_dir.get().strip() or "/tmp",
+            on_line=self._console.append,
+            on_done=self._auto_done,
+        )
+
+    def _auto_done(self, rc):
+        self._progress.stop()
+        self._auto_btn.config(state="normal")
+        self._auto_all_btn.config(state="normal")
+        if rc == 0:
+            self._status.set("Auto R-DECO complete ✓")
+            self._console.append("[Auto R-DECO] Finished. Review the *_rdeco_qc.png images.", "ok")
+        else:
+            self._status.set(f"Auto R-DECO failed (exit {rc})")
+            self._console.append(f"[Auto R-DECO] Failed (exit {rc}).", "error")
+        self._refresh()
+
 
 class Step04Panel(ttk.Frame):
     """Step 04: Filter physio per-sequence mats + R-DECO launcher."""
@@ -2624,7 +2821,7 @@ class Step04Panel(ttk.Frame):
         nb.pack(fill="both", expand=True)
 
         filt_tab  = _FilterPhysioTab(nb, cfg, console, status_var, runner, preproc_dir_var)
-        rdeco_tab = _RDecoTab(nb, console, status_var, preproc_dir_var)
+        rdeco_tab = _RDecoTab(nb, console, status_var, preproc_dir_var, runner, cfg=cfg)
 
         nb.add(filt_tab,  text="  Filter Physio  ")
         nb.add(rdeco_tab, text="  R-DECO  ")
@@ -2660,9 +2857,9 @@ class Step05Panel(ttk.Frame):
         self._preproc_var = tk.StringVar()
         self._input_var   = tk.StringVar()
         self._output_var  = tk.StringVar()
-        self._matlab_var  = tk.StringVar(value=self._DEFAULTS["matlab_exe"])
-        self._mcode_var   = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "matlab_code"))
-        self._retro_var   = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "retroicor"))
+        self._matlab_var  = cfg["matlab_exe"]
+        self._mcode_var   = cfg["matlab_code"]
+        self._retro_var   = cfg["retro_code"]
         self._session_var = tk.StringVar(value=self._DEFAULTS["session"])
         self._sms_var     = tk.StringVar(value=self._DEFAULTS["sms"])
         self._fs_var      = tk.StringVar(value=self._DEFAULTS["fs_out"])
@@ -2744,7 +2941,7 @@ class Step05Panel(ttk.Frame):
         ).pack(anchor="w", pady=(0, 12))
 
         # Summary
-        self._summary_lbl = ttk.Label(tab, foreground="#9cdcfe", wraplength=560)
+        self._summary_lbl = ttk.Label(tab, foreground="#ff4444", wraplength=560)
         self._summary_lbl.pack(anchor="w", pady=(0, 10))
         self._update_summary()
         self._subj_var.trace_add("write", lambda *_: self._update_summary())
@@ -2989,12 +3186,13 @@ class Step06Panel(ttk.Frame):
         self._subj_var      = tk.StringVar()
         self._parsed_var    = tk.StringVar()
         self._stim_var      = tk.StringVar()
-        self._fmriprep_var  = tk.StringVar()
+        self._fmriprep_var  = cfg["fmriprep"]
         self._firstlvl_var  = tk.StringVar()
+        self._retro_var     = tk.StringVar()   # retroicor output (regressors source)
         self._session_var   = tk.StringVar(value="01")
         self._threshold_var = tk.StringVar(value="1.5")
         self._debounce_var  = tk.StringVar(value="1.5")
-        self._python_var    = tk.StringVar(value=sys.executable)
+        self._python_var    = cfg["python_exe"]
         self._do_qc         = tk.BooleanVar(value=True)
         self._do_prep       = tk.BooleanVar(value=True)
 
@@ -3037,6 +3235,7 @@ class Step06Panel(ttk.Frame):
         pr("Parsed mats (physioparse step 03):", self._parsed_var)
         pr("Stim output dir:", self._stim_var)
         pr("fMRIPrep derivatives dir:", self._fmriprep_var)
+        pr("Retroicor output (regressors):", self._retro_var)
         pr("First-level folder:", self._firstlvl_var)
         pr("Python exe:", self._python_var, mode="file")
 
@@ -3078,7 +3277,7 @@ class Step06Panel(ttk.Frame):
             foreground="gray", wraplength=580,
         ).pack(anchor="w", pady=(0, 10))
 
-        self._summary_lbl = ttk.Label(tab, foreground="#9cdcfe", wraplength=560)
+        self._summary_lbl = ttk.Label(tab, foreground="#ff4444", wraplength=560)
         self._summary_lbl.pack(anchor="w", pady=(0, 8))
         self._update_summary()
         self._subj_var.trace_add("write", lambda *_: self._update_summary())
@@ -3161,7 +3360,11 @@ class Step06Panel(ttk.Frame):
         self._parsed_var.set(str(base / "parsed"))
         self._stim_var.set(str(base / "stimtrigger"))
         self._fmriprep_var.set(str(Path(sd) / "derivatives" / "fmriprep"))
-        self._firstlvl_var.set(str(base / "first_level"))
+        self._retro_var.set(str(base / "retroicor" / "output"))
+        # SHARED first-level folder (not per-subject): step07 runs over all
+        # subjects and reads every subject's files from one place. Files are
+        # named by subject, so they coexist.
+        self._firstlvl_var.set(str(Path(sd) / "derivatives" / "physio" / "first_level"))
 
     def _update_summary(self):
         subj = self._subj_var.get().strip()
@@ -3277,21 +3480,31 @@ class Step06Panel(ttk.Frame):
 
         stim   = self._stim_var.get().strip()
         fmrip  = self._fmriprep_var.get().strip()
+        retro  = self._retro_var.get().strip()
         ses    = self._session_var.get().strip()
         fl_dir = self._firstlvl_var.get().strip()
+        subj_dir = str(Path(fmrip) / subj)
         func_dir = str(Path(fmrip) / subj / f"ses-{ses}" / "func")
 
+        # Numbered sub-folders (the GLM also accepts legacy unnumbered names)
+        d_stim   = f"{fl_dir}/01_stim_onsets"
+        d_motion = f"{fl_dir}/02_motion_regressors"
+        d_retro  = f"{fl_dir}/03_retroicor_regressors"
+        d_bold   = f"{fl_dir}/04_bolds"
         script = (
             f"set -euo pipefail\n"
-            f"mkdir -p '{fl_dir}/stim_onsets' '{fl_dir}/motion_regressors' '{fl_dir}/bolds'\n"
+            f"mkdir -p '{d_stim}' '{d_motion}' '{d_retro}' '{d_bold}'\n"
             # Stim files
-            f"for f in '{stim}'/*_bold_stim.txt; do [ -f \"$f\" ] && cp -f \"$f\" '{fl_dir}/stim_onsets/'; done\n"
-            # Motion regressors
-            f"for f in '{func_dir}'/*_nuisance_regressors_for_GLM_no_header.txt; do "
-            f"[ -f \"$f\" ] && cp -f \"$f\" '{fl_dir}/motion_regressors/'; done\n"
+            f"for f in '{stim}'/*_bold_stim.txt; do [ -f \"$f\" ] && cp -f \"$f\" '{d_stim}/'; done\n"
+            # Motion regressors — search the subject root AND the func dir
+            f"for f in '{subj_dir}'/*_motion_regressors.txt '{func_dir}'/*_motion_regressors.txt; do "
+            f"[ -f \"$f\" ] && cp -f \"$f\" '{d_motion}/'; done\n"
+            # Retroicor regressors (*_retro-regressors.mat)
+            f"for f in '{retro}'/*_retro-regressors.mat; do "
+            f"[ -f \"$f\" ] && cp -f \"$f\" '{d_retro}/'; done\n"
             # T1w BOLD
             f"for f in '{func_dir}'/*_space-T1w_desc-preproc_bold.nii.gz; do "
-            f"[ -f \"$f\" ] && cp -f \"$f\" '{fl_dir}/bolds/'; done\n"
+            f"[ -f \"$f\" ] && cp -f \"$f\" '{d_bold}/'; done\n"
             f"echo 'First-level folder ready: {fl_dir}'"
         )
         self._run_cmd(["bash", "-c", script], fl_dir, "Part 3 — First-level prep")
@@ -3310,6 +3523,7 @@ class Step06Panel(ttk.Frame):
         stim    = self._stim_var.get().strip()
         fmrip   = self._fmriprep_var.get().strip()
         fl_dir  = self._firstlvl_var.get().strip()
+        retro   = self._retro_var.get().strip()
         ses     = self._session_var.get().strip()
         thr     = self._threshold_var.get().strip()
         deb     = self._debounce_var.get().strip()
@@ -3321,7 +3535,7 @@ class Step06Panel(ttk.Frame):
         cmd = [
             "bash", script_path,
             subj, sd, parsed, stim, fmrip, fl_dir,
-            ses, thr, deb, python, qc_flag, prep,
+            ses, thr, deb, python, qc_flag, prep, retro,
         ]
         self._run_cmd(cmd, stim, "All parts")
 
@@ -3368,15 +3582,22 @@ class Step07Panel(ttk.Frame):
         self._sublist_var = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "SubjectListBIDS.txt"))
         self._firstlvl_var = tk.StringVar()
         self._output_var   = tk.StringVar()
-        self._spm_var      = tk.StringVar(
-            value="/autofs/cluster/vagabond/USERS/MARIO/Packages/matlab/spm12")
-        self._matlab_var   = tk.StringVar(value="matlab")
-        self._mcode_var    = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "matlab_code"))
+        self._spm_var      = cfg["spm_dir"]
+        self._matlab_var   = cfg["matlab_exe"]
+        self._mcode_var    = cfg["matlab_code"]
+        self._env_var      = cfg["env_script"]
         self._session_var  = tk.StringVar(value="01")
         self._run_var      = tk.StringVar(value="01")
         self._tr_var       = tk.StringVar(value="1.19")
         self._smooth_var   = tk.StringVar(value="3")
         self._do_mni       = tk.BooleanVar(value=True)
+        self._use_sourcedata = tk.BooleanVar(value=False)
+        self._warp_only    = tk.BooleanVar(value=False)
+        # Single-folder warp (warp ANY con folder + a T1 → MNI)
+        self._wf_con_var   = tk.StringVar()
+        self._wf_t1_var    = tk.StringVar()
+        self._wf_out_var   = tk.StringVar()
+        self._wf_pat_var   = tk.StringVar(value="con_*.nii")
 
         ttk.Label(self, text="Step 07 — First-level GLM + MNI",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
@@ -3405,11 +3626,17 @@ class Step07Panel(ttk.Frame):
                 var=self._matlab_var, label_width=22).pack(fill="x", pady=2)
         PathRow(pf, "MATLAB code dir:", mode="dir",
                 var=self._mcode_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Environment script:", mode="file",
+                filetypes=[("Shell", "*.sh"), ("All", "*.*")],
+                var=self._env_var, label_width=22).pack(fill="x", pady=2)
+        ttk.Label(pf, text="(sourced to put MATLAB/SPM on PATH — type 'none' to skip; "
+                           "the script is sourced with set +u so FreeSurfer env files don't abort)",
+                  foreground="gray", wraplength=560).pack(anchor="w", pady=(0, 2))
 
         # ── fMRIPrep summary (located, not configured — derived from Setup) ────
         info = ttk.LabelFrame(self, text="Mask + BOLD source (located in place)", padding=(8, 4))
         info.pack(fill="x", pady=(0, 8))
-        self._fmriprep_lbl = ttk.Label(info, foreground="#9cdcfe", wraplength=560)
+        self._fmriprep_lbl = ttk.Label(info, foreground="#ff4444", wraplength=560)
         self._fmriprep_lbl.pack(anchor="w")
         cfg["sourcedata"].trace_add("write", lambda *_: self._sync())
         self._sync()
@@ -3430,6 +3657,10 @@ class Step07Panel(ttk.Frame):
 
         ttk.Checkbutton(pm, text="Warp contrasts to MNI (segment T1 → wcon_*.nii)",
                         variable=self._do_mni).pack(anchor="w", pady=(4, 0))
+        ttk.Checkbutton(pm, text="Use per-subject physio dirs (sourcedata/derivatives/physio/<subj>/stimtrigger/)",
+                        variable=self._use_sourcedata).pack(anchor="w", pady=(4, 0))
+        ttk.Checkbutton(pm, text="Warp-only mode (skip GLM, only warp existing con_*.nii to MNI)",
+                        variable=self._warp_only).pack(anchor="w", pady=(4, 0))
 
         ttk.Separator(self).pack(fill="x", pady=8)
 
@@ -3437,8 +3668,66 @@ class Step07Panel(ttk.Frame):
         btn_row.pack(anchor="w")
         self._run_btn = ttk.Button(btn_row, text="▶  Run First-level + MNI", command=self._run)
         self._run_btn.pack(side="left")
+        self._stop_btn = ttk.Button(btn_row, text="⏹ Stop", command=self._stop, state="disabled")
+        self._stop_btn.pack(side="left", padx=4)
         self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=220)
         self._progress.pack(side="left", padx=12)
+
+        # ── Optional: warp a single already-done first-level folder ────────────
+        wf = ttk.LabelFrame(
+            self, text="Optional — warp a single folder (con + T1 → MNI, no GLM)",
+            padding=(10, 6))
+        wf.pack(fill="x", pady=(12, 4))
+        ttk.Label(wf,
+                  text=("Point at any folder of con_*.nii (already-done first level) plus the "
+                        "subject T1; segments the T1 and writes w<con>.nii. Use this instead of "
+                        "the batch warp-only when your contrasts aren't in the <subj>/<task> tree."),
+                  foreground="gray", wraplength=580).pack(anchor="w", pady=(0, 6))
+        PathRow(wf, "Con folder:", mode="dir",
+                var=self._wf_con_var, label_width=16).pack(fill="x", pady=2)
+        PathRow(wf, "T1 file:", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._wf_t1_var, label_width=16).pack(fill="x", pady=2)
+        PathRow(wf, "Output dir:", mode="dir",
+                var=self._wf_out_var, label_width=16).pack(fill="x", pady=2)
+        pr = ttk.Frame(wf); pr.pack(fill="x", pady=2)
+        ttk.Label(pr, text="Con pattern:", width=16, anchor="w").pack(side="left")
+        ttk.Entry(pr, textvariable=self._wf_pat_var, width=16).pack(side="left")
+        self._wf_btn = ttk.Button(wf, text="▶  Warp this folder", command=self._run_warp_folder)
+        self._wf_btn.pack(anchor="w", pady=(6, 0))
+
+    def _run_warp_folder(self):
+        script = str(SCRIPTS_ROOT / "step07b_warp_folder_v2.sh")
+        if not os.path.isfile(script):
+            messagebox.showerror("Error", f"step07b_warp_folder_v2.sh not found:\n{script}")
+            return
+        con = self._wf_con_var.get().strip()
+        t1  = self._wf_t1_var.get().strip()
+        out = self._wf_out_var.get().strip() or con
+        if not con or not os.path.isdir(con):
+            messagebox.showerror("Error", f"Con folder not found:\n{con}"); return
+        if not t1 or not os.path.isfile(t1):
+            messagebox.showerror("Error", f"T1 file not found:\n{t1}"); return
+        cmd = ["bash", script, con, t1, out,
+               self._spm_var.get().strip(), self._matlab_var.get().strip(),
+               self._mcode_var.get().strip(), self._wf_pat_var.get().strip() or "con_*.nii",
+               self._env_var.get().strip() or "none"]
+        self._console.separator()
+        self._console.append(f"[Step 07b] Warping folder: {con}", "info")
+        self._console.separator()
+        self._wf_btn.config(state="disabled"); self._progress.start(10)
+        self._status.set("Step 07b (warp folder) running…")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append, on_done=self._warp_done)
+
+    def _warp_done(self, rc):
+        self._progress.stop(); self._wf_btn.config(state="normal")
+        if rc == 0:
+            self._status.set("Step 07b warp complete ✓")
+            self._console.append("[Step 07b] Folder warped to MNI.", "ok")
+        else:
+            self._status.set(f"Step 07b failed (exit {rc})")
+            self._console.append(f"[Step 07b] Failed (exit {rc}).", "error")
 
     def _sync(self):
         sd = self._cfg["sourcedata"].get().strip()
@@ -3473,16 +3762,19 @@ class Step07Panel(ttk.Frame):
         spm    = self._spm_var.get().strip()
         matlab = self._matlab_var.get().strip()
         mcode  = self._mcode_var.get().strip()
+        env    = self._env_var.get().strip() or "none"
         ses    = self._session_var.get().strip() or "01"
         run    = self._run_var.get().strip() or "01"
         tr     = self._tr_var.get().strip() or "1.19"
         smooth = self._smooth_var.get().strip() or "3"
         do_mni = "1" if self._do_mni.get() else "0"
+        warp_only = "1" if self._warp_only.get() else "0"
+        use_sourcedata = "1" if self._use_sourcedata.get() else "0"
 
         cmd = [
             "bash", script,
             sublist, sd, flvl, out, spm, matlab, mcode,
-            ses, run, tr, smooth, do_mni,
+            ses, run, tr, smooth, do_mni, env, warp_only, use_sourcedata,
         ]
 
         self._console.separator()
@@ -3490,6 +3782,7 @@ class Step07Panel(ttk.Frame):
         self._console.separator()
 
         self._run_btn.config(state="disabled")
+        self._stop_btn.config(state="normal")
         self._progress.start(10)
         self._status.set("Step 07 (first-level) running…")
 
@@ -3499,6 +3792,7 @@ class Step07Panel(ttk.Frame):
     def _done(self, rc):
         self._progress.stop()
         self._run_btn.config(state="normal")
+        self._stop_btn.config(state="disabled")
         if rc == 0:
             self._status.set("Step 07 complete ✓")
             self._console.append("[Step 07] First-level + MNI finished.", "ok")
@@ -3506,11 +3800,239 @@ class Step07Panel(ttk.Frame):
             self._status.set(f"Step 07 failed (exit {rc})")
             self._console.append(f"[Step 07] Failed (exit {rc}).", "error")
 
+    def _stop(self):
+        """Stop the currently running process."""
+        self._runner.stop()
+
 
 # ── Step 08 — Second-level (group) analysis ───────────────────────────────────
 
 class Step08Panel(ttk.Frame):
-    """Step 08: Group one-sample t-tests per task + combined Block/Continuous."""
+    """Step 08, two parts:
+       Part 1 — Populate per-task folders from the step07 contrasts.
+       Part 2 — Cases vs Controls two-sample analysis + contrasts."""
+
+    def __init__(self, parent, cfg: dict, console: Console,
+                 status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
+        super().__init__(parent, padding=(6, 6), **kwargs)
+        self._cfg     = cfg
+        self._console = console
+        self._status  = status_var
+        self._runner  = runner
+
+        # ── Shared vars ───────────────────────────────────────────────────────
+        self._firstlvl_var = tk.StringVar()   # step07 output root (Part 1 input)
+        self._taskroot_var = tk.StringVar()   # populated per-task root (Part 1 output / Part 2 input)
+        self._group_out    = tk.StringVar()   # Part 2 results
+        self._cases_var    = tk.StringVar()
+        self._controls_var = tk.StringVar()
+        self._spm_var      = cfg["spm_dir"]
+        self._matlab_var   = cfg["matlab_exe"]
+        self._mcode_var    = cfg["matlab_code"]
+        self._env_var      = cfg["env_script"]
+        self._con_var      = tk.StringVar(value="wcon_0001.nii")
+        self._do_combined  = tk.BooleanVar(value=True)
+
+        ttk.Label(self, text="Step 08 — Second-level (Group)",
+                  font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
+
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True)
+        nb.add(self._build_part1(nb), text="  Part 1 — Populate task folders  ")
+        nb.add(self._build_part2(nb), text="  Part 2 — Cases vs Controls  ")
+
+        cfg["sourcedata"].trace_add("write", lambda *_: self._sync())
+        self._sync()
+
+        # progress + run-state shared across both parts
+        self._busy_btns = []
+
+    # ── Part 1 — Populate ─────────────────────────────────────────────────────
+    def _build_part1(self, parent):
+        tab = ttk.Frame(parent, padding=14)
+        ttk.Label(tab, text="Populate per-task folders",
+                  font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            tab,
+            text=("Gathers the step07 contrast images (<subject>/<task>/<con>) into flat\n"
+                  "per-task folders: <task root>/<task>/<subject>.nii  (+ _subjects.txt).\n"
+                  "Group stats need MNI space — use wcon_0001.nii (step07's MNI warp)."),
+            foreground="gray", wraplength=600,
+        ).pack(anchor="w", pady=(0, 10))
+
+        pf = ttk.LabelFrame(tab, text="Paths", padding=(10, 6))
+        pf.pack(fill="x", pady=(0, 8))
+        PathRow(pf, "Step07 output root:", mode="dir",
+                var=self._firstlvl_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Task root (output):", mode="dir",
+                var=self._taskroot_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "SPM12 dir:", mode="dir",
+                var=self._spm_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "MATLAB exe:", mode="file",
+                var=self._matlab_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "MATLAB code dir:", mode="dir",
+                var=self._mcode_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Environment script:", mode="file",
+                filetypes=[("Shell", "*.sh"), ("All", "*.*")],
+                var=self._env_var, label_width=22).pack(fill="x", pady=2)
+
+        cr = ttk.Frame(tab); cr.pack(fill="x", pady=(0, 8))
+        ttk.Label(cr, text="Contrast image filename:", width=24, anchor="w").pack(side="left")
+        ttk.Entry(cr, textvariable=self._con_var, width=20).pack(side="left")
+
+        ttk.Separator(tab).pack(fill="x", pady=8)
+        row = ttk.Frame(tab); row.pack(anchor="w")
+        self._p1_btn = ttk.Button(row, text="▶  Run Part 1 — Populate", command=self._run_part1)
+        self._p1_btn.pack(side="left")
+        self._p1_prog = ttk.Progressbar(row, mode="indeterminate", length=200)
+        self._p1_prog.pack(side="left", padx=12)
+        return tab
+
+    # ── Part 2 — Cases vs Controls ────────────────────────────────────────────
+    def _build_part2(self, parent):
+        tab = ttk.Frame(parent, padding=14)
+        ttk.Label(tab, text="Cases vs Controls — two-sample t-test",
+                  font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            tab,
+            text=("Splits the populated subjects into cases and controls (two text files,\n"
+                  "one BIDS subject per line) and runs a two-sample t-test per task with\n"
+                  "contrasts: Cases>Controls, Controls>Cases, Cases mean, Controls mean.\n"
+                  "A pooled Block+Continuous analysis is also run."),
+            foreground="gray", wraplength=600,
+        ).pack(anchor="w", pady=(0, 10))
+
+        gf = ttk.LabelFrame(tab, text="Groups", padding=(10, 6))
+        gf.pack(fill="x", pady=(0, 8))
+        PathRow(gf, "Task root (Part 1 out):", mode="dir",
+                var=self._taskroot_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(gf, "Cases list (.txt):", mode="file",
+                filetypes=[("Text", "*.txt"), ("All", "*.*")],
+                var=self._cases_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(gf, "Controls list (.txt):", mode="file",
+                filetypes=[("Text", "*.txt"), ("All", "*.*")],
+                var=self._controls_var, label_width=22).pack(fill="x", pady=2)
+        ttk.Button(gf, text="↻ Preview populated subjects",
+                   command=self._preview_subjects).pack(anchor="w", pady=(4, 0))
+
+        of = ttk.LabelFrame(tab, text="Output", padding=(10, 6))
+        of.pack(fill="x", pady=(0, 8))
+        PathRow(of, "Group output dir:", mode="dir",
+                var=self._group_out, label_width=22).pack(fill="x", pady=2)
+        ttk.Checkbutton(of, text="Also run pooled BlockStim + ContinuousStim",
+                        variable=self._do_combined).pack(anchor="w", pady=(4, 0))
+
+        ttk.Separator(tab).pack(fill="x", pady=8)
+        row = ttk.Frame(tab); row.pack(anchor="w")
+        self._p2_btn = ttk.Button(row, text="▶  Run Part 2 — Group analysis", command=self._run_part2)
+        self._p2_btn.pack(side="left")
+        self._p2_prog = ttk.Progressbar(row, mode="indeterminate", length=200)
+        self._p2_prog.pack(side="left", padx=12)
+        return tab
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def _sync(self):
+        sd = self._cfg["sourcedata"].get().strip()
+        if not sd:
+            return
+        if not self._firstlvl_var.get():
+            self._firstlvl_var.set(str(Path(sd) / "derivatives" / "spm" / "first_level"))
+        if not self._taskroot_var.get():
+            self._taskroot_var.set(str(Path(sd) / "derivatives" / "spm" / "second_level" / "tasks"))
+        if not self._group_out.get():
+            self._group_out.set(str(Path(sd) / "derivatives" / "spm" / "second_level" / "groups"))
+
+    def _preview_subjects(self):
+        root = self._taskroot_var.get().strip()
+        if not root or not os.path.isdir(root):
+            messagebox.showwarning("Not found", f"Task root not found:\n{root}\nRun Part 1 first.")
+            return
+        lines = []
+        for task in sorted(os.listdir(root)):
+            td = os.path.join(root, task)
+            if not os.path.isdir(td):
+                continue
+            subs = sorted(f[:-4] for f in os.listdir(td) if f.endswith(".nii"))
+            lines.append(f"{task}: {len(subs)} subject(s)")
+            for s in subs:
+                lines.append(f"    {s}")
+        messagebox.showinfo("Populated subjects",
+                            "\n".join(lines) if lines else "No populated subjects found.")
+
+    def _run_part1(self):
+        script = str(SCRIPTS_ROOT / "step08a_populate_v2.sh")
+        if not os.path.isfile(script):
+            messagebox.showerror("Error", f"step08a_populate_v2.sh not found:\n{script}")
+            return
+        flroot = self._firstlvl_var.get().strip()
+        troot  = self._taskroot_var.get().strip()
+        if not flroot or not os.path.isdir(flroot):
+            messagebox.showerror("Error", f"Step07 output root not found:\n{flroot}")
+            return
+        if not troot:
+            messagebox.showerror("Error", "Set the task root (output) directory.")
+            return
+        cmd = ["bash", script, flroot, troot,
+               self._spm_var.get().strip(), self._matlab_var.get().strip(),
+               self._mcode_var.get().strip(), self._con_var.get().strip() or "wcon_0001.nii",
+               self._env_var.get().strip() or "none"]
+        self._launch(cmd, self._p1_btn, self._p1_prog, "Part 1 — Populate")
+
+    def _run_part2(self):
+        script = str(SCRIPTS_ROOT / "step08b_groups_v2.sh")
+        if not os.path.isfile(script):
+            messagebox.showerror("Error", f"step08b_groups_v2.sh not found:\n{script}")
+            return
+        troot = self._taskroot_var.get().strip()
+        cases = self._cases_var.get().strip()
+        ctrls = self._controls_var.get().strip()
+        out   = self._group_out.get().strip()
+        if not troot or not os.path.isdir(troot):
+            messagebox.showerror("Error", f"Task root not found:\n{troot}\nRun Part 1 first.")
+            return
+        if not cases or not os.path.isfile(cases):
+            messagebox.showerror("Error", f"Cases list not found:\n{cases}")
+            return
+        if not ctrls or not os.path.isfile(ctrls):
+            messagebox.showerror("Error", f"Controls list not found:\n{ctrls}")
+            return
+        if not out:
+            messagebox.showerror("Error", "Set the group output directory.")
+            return
+        comb = "1" if self._do_combined.get() else "0"
+        cmd = ["bash", script, troot, cases, ctrls, out,
+               self._spm_var.get().strip(), self._matlab_var.get().strip(),
+               self._mcode_var.get().strip(), comb,
+               self._env_var.get().strip() or "none"]
+        self._launch(cmd, self._p2_btn, self._p2_prog, "Part 2 — Group analysis")
+
+    def _launch(self, cmd, btn, prog, label):
+        self._console.separator()
+        self._console.append(f"[Step 08] {label} starting…", "info")
+        self._console.separator()
+        btn.config(state="disabled")
+        prog.start(10)
+        self._status.set(f"Step 08 — {label} running…")
+        self._runner.run(
+            cmd=cmd, cwd=str(SCRIPTS_ROOT),
+            on_line=self._console.append,
+            on_done=lambda rc, b=btn, p=prog, l=label: self._done(rc, b, p, l))
+
+    def _done(self, rc, btn, prog, label):
+        prog.stop()
+        btn.config(state="normal")
+        if rc == 0:
+            self._status.set(f"Step 08 — {label} ✓")
+            self._console.append(f"[Step 08] {label} finished.", "ok")
+        else:
+            self._status.set(f"Step 08 — {label} failed (exit {rc})")
+            self._console.append(f"[Step 08] {label} failed (exit {rc}).", "error")
+
+
+# ── Step 09 — Threshold group map (p<0.05) ────────────────────────────────────
+
+class Step09Panel(ttk.Frame):
+    """Step 09: threshold a step08b group contrast at p<0.05 → significance map."""
 
     def __init__(self, parent, cfg: dict, console: Console,
                  status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
@@ -3520,154 +4042,235 @@ class Step08Panel(ttk.Frame):
         self._status  = status_var
         self._runner  = runner
 
-        # ── Vars ──────────────────────────────────────────────────────────────
-        self._block_var   = tk.StringVar()
-        self._cont_var    = tk.StringVar()
-        self._rest_var     = tk.StringVar()
-        self._output_var  = tk.StringVar()
-        self._spm_var     = tk.StringVar(
-            value="/autofs/cluster/vagabond/USERS/MARIO/Packages/matlab/spm12")
-        self._matlab_var  = tk.StringVar(value="matlab")
-        self._mcode_var   = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "matlab_code"))
-        self._con_var     = tk.StringVar(value="wcon_0001.nii")
-        self._do_combined = tk.BooleanVar(value=True)
+        self._analysis_var = tk.StringVar()
+        self._output_var   = tk.StringVar()
+        self._spm_var      = cfg["spm_dir"]
+        self._matlab_var   = cfg["matlab_exe"]
+        self._mcode_var    = cfg["matlab_code"]
+        self._env_var      = cfg["env_script"]
+        self._p_var        = tk.StringVar(value="0.05")
+        self._extent_var   = tk.StringVar(value="0")
+        self._cidx_var     = tk.StringVar(value="1")
+        self._tail_var     = tk.StringVar(value="pos")
 
-        ttk.Label(self, text="Step 08 — Second-level (Group)",
+        ttk.Label(self, text="Step 09 — Threshold group map",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
-            text=("Manually select each task folder (BlockStim, ContinuousStim, rest).\n"
-                  "Each is searched recursively for the contrast image — one per subject —\n"
-                  "and a one-sample t-test is run. A combined Block+Continuous test is also run.\n"
-                  "Group stats require MNI space: use wcon_0001.nii (from step07's MNI warp)."),
+            text=("Threshold a step08b group contrast (default 1 = Cases>Controls)\n"
+                  "at p<0.05 → binary significance map + thresholded t-map.\n"
+                  "Point at a step08b task folder (SPM.mat + spmT_000*.nii)."),
             foreground="gray", wraplength=600,
         ).pack(anchor="w", pady=(0, 10))
 
-        # ── Task folders ───────────────────────────────────────────────────────
-        tf = ttk.LabelFrame(self, text="Task folders (select manually)", padding=(10, 6))
-        tf.pack(fill="x", pady=(0, 8))
-        PathRow(tf, "BlockStim folder:", mode="dir",
-                var=self._block_var, label_width=20).pack(fill="x", pady=2)
-        PathRow(tf, "ContinuousStim folder:", mode="dir",
-                var=self._cont_var, label_width=20).pack(fill="x", pady=2)
-        PathRow(tf, "rest folder:", mode="dir",
-                var=self._rest_var, label_width=20).pack(fill="x", pady=2)
-        ttk.Label(tf, text="Leave a folder blank to skip that task.",
-                  foreground="gray").pack(anchor="w", pady=(2, 0))
+        pf = ttk.LabelFrame(self, text="Paths", padding=(10, 6))
+        pf.pack(fill="x", pady=(0, 8))
+        PathRow(pf, "Analysis dir (step08b task):", mode="dir",
+                var=self._analysis_var, label_width=24).pack(fill="x", pady=2)
+        PathRow(pf, "Output dir:", mode="dir",
+                var=self._output_var, label_width=24).pack(fill="x", pady=2)
+        PathRow(pf, "SPM12 dir:", mode="dir",
+                var=self._spm_var, label_width=24).pack(fill="x", pady=2)
+        PathRow(pf, "MATLAB exe:", mode="file",
+                var=self._matlab_var, label_width=24).pack(fill="x", pady=2)
+        PathRow(pf, "MATLAB code dir:", mode="dir",
+                var=self._mcode_var, label_width=24).pack(fill="x", pady=2)
+        PathRow(pf, "Environment script:", mode="file",
+                filetypes=[("Shell", "*.sh"), ("All", "*.*")],
+                var=self._env_var, label_width=24).pack(fill="x", pady=2)
 
-        # Quick-fill from a step07 output root
-        qf = ttk.Frame(tf)
-        qf.pack(fill="x", pady=(6, 0))
-        ttk.Button(qf, text="Auto-fill from step07 output root…",
-                   command=self._autofill).pack(side="left")
-        ttk.Label(qf, text="(points all three at the same root — recursive search separates tasks)",
-                  foreground="gray").pack(side="left", padx=6)
+        pm = ttk.LabelFrame(self, text="Threshold", padding=(10, 6))
+        pm.pack(fill="x", pady=(0, 8))
 
-        # ── Output + tools ─────────────────────────────────────────────────────
-        of = ttk.LabelFrame(self, text="Output & tools", padding=(10, 6))
-        of.pack(fill="x", pady=(0, 8))
-        PathRow(of, "Output dir:", mode="dir",
-                var=self._output_var, label_width=20).pack(fill="x", pady=2)
-        PathRow(of, "SPM12 dir:", mode="dir",
-                var=self._spm_var, label_width=20).pack(fill="x", pady=2)
-        PathRow(of, "MATLAB exe:", mode="file",
-                var=self._matlab_var, label_width=20).pack(fill="x", pady=2)
-        PathRow(of, "MATLAB code dir:", mode="dir",
-                var=self._mcode_var, label_width=20).pack(fill="x", pady=2)
+        def er(lbl, var, w=8):
+            r = ttk.Frame(pm); r.pack(side="left", padx=(0, 14))
+            ttk.Label(r, text=lbl).pack(side="left")
+            ttk.Entry(r, textvariable=var, width=w).pack(side="left", padx=(4, 0))
 
-        # ── Options ────────────────────────────────────────────────────────────
-        op = ttk.LabelFrame(self, text="Options", padding=(10, 6))
-        op.pack(fill="x", pady=(0, 8))
-        cr = ttk.Frame(op)
-        cr.pack(fill="x", pady=2)
-        ttk.Label(cr, text="Contrast image filename:", width=24, anchor="w").pack(side="left")
-        ttk.Entry(cr, textvariable=self._con_var, width=20).pack(side="left")
-        ttk.Checkbutton(op, text="Run combined BlockStim + ContinuousStim test",
-                        variable=self._do_combined).pack(anchor="w", pady=(4, 0))
+        er("p <", self._p_var, 6)
+        er("Cluster extent (vox):", self._extent_var, 6)
+        er("Contrast #:", self._cidx_var, 4)
+        tr = ttk.Frame(pm); tr.pack(side="left", padx=(0, 6))
+        ttk.Label(tr, text="Tail:").pack(side="left")
+        ttk.Combobox(tr, textvariable=self._tail_var, width=6, state="readonly",
+                     values=["pos", "neg", "two"]).pack(side="left", padx=(4, 0))
 
-        # Default output dir derived from sourcedata
         cfg["sourcedata"].trace_add("write", lambda *_: self._sync())
         self._sync()
 
         ttk.Separator(self).pack(fill="x", pady=8)
-
-        btn_row = ttk.Frame(self)
-        btn_row.pack(anchor="w")
-        self._run_btn = ttk.Button(btn_row, text="▶  Run Second-level", command=self._run)
+        row = ttk.Frame(self); row.pack(anchor="w")
+        self._run_btn = ttk.Button(row, text="▶  Run Step 09 — Threshold", command=self._run)
         self._run_btn.pack(side="left")
-        self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=220)
+        self._progress = ttk.Progressbar(row, mode="indeterminate", length=220)
         self._progress.pack(side="left", padx=12)
 
     def _sync(self):
         sd = self._cfg["sourcedata"].get().strip()
         if sd and not self._output_var.get():
-            self._output_var.set(str(Path(sd) / "derivatives" / "spm" / "second_level"))
-
-    def _autofill(self):
-        d = filedialog.askdirectory(title="Select step07 first-level output root")
-        if not d:
-            return
-        # All three task searches share the same root; recursive glob separates them
-        # only if the per-task subfolders are named BlockStim/ContinuousStim/rest.
-        # We point each var at root/<task> if those exist, else at root.
-        for var, task in ((self._block_var, "BlockStim"),
-                          (self._cont_var,  "ContinuousStim"),
-                          (self._rest_var,  "rest")):
-            # step07 layout is <root>/<subj>/<task>/wcon — task dirs are nested,
-            # so the recursive search must start at root. Point each var at root;
-            # the MATLAB side filters by the folder you give it.
-            var.set(d)
+            self._output_var.set(str(Path(sd) / "derivatives" / "spm" / "second_level" / "thresholded"))
 
     def _run(self):
-        script = str(SCRIPTS_ROOT / "step08_secondlevel_v2.sh")
+        script = str(SCRIPTS_ROOT / "step09_p_value.sh")
         if not os.path.isfile(script):
-            messagebox.showerror("Error", f"step08_secondlevel_v2.sh not found:\n{script}")
-            return
-
-        block = self._block_var.get().strip()
-        cont  = self._cont_var.get().strip()
-        rest  = self._rest_var.get().strip()
-        out   = self._output_var.get().strip()
-
-        if not (block or cont or rest):
-            messagebox.showerror("Error", "Select at least one task folder.")
-            return
+            messagebox.showerror("Error", f"step09_p_value.sh not found:\n{script}"); return
+        ana = self._analysis_var.get().strip()
+        out = self._output_var.get().strip()
+        if not ana or not os.path.isfile(os.path.join(ana, "SPM.mat")):
+            messagebox.showerror("Error", f"SPM.mat not found in:\n{ana}"); return
         if not out:
-            messagebox.showerror("Error", "Set an output directory.")
-            return
-
-        spm    = self._spm_var.get().strip()
-        matlab = self._matlab_var.get().strip()
-        mcode  = self._mcode_var.get().strip()
-        con    = self._con_var.get().strip() or "con_0001.nii"
-        comb   = "1" if self._do_combined.get() else "0"
-
-        cmd = [
-            "bash", script,
-            block, cont, rest, out,
-            spm, matlab, mcode, con, comb,
-        ]
-
+            messagebox.showerror("Error", "Set an output dir."); return
+        cmd = ["bash", script, ana, out,
+               self._spm_var.get().strip(), self._matlab_var.get().strip(),
+               self._mcode_var.get().strip(), self._p_var.get().strip() or "0.05",
+               self._extent_var.get().strip() or "0", self._cidx_var.get().strip() or "1",
+               self._tail_var.get().strip() or "pos", self._env_var.get().strip() or "none"]
         self._console.separator()
-        self._console.append("[Step 08] Second-level group analysis starting…", "info")
+        self._console.append("[Step 09] Thresholding group map…", "info")
         self._console.separator()
-
-        self._run_btn.config(state="disabled")
-        self._progress.start(10)
-        self._status.set("Step 08 (second-level) running…")
-
+        self._run_btn.config(state="disabled"); self._progress.start(10)
+        self._status.set("Step 09 running…")
         self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
-                        on_line=self._console.append, on_done=self._done)
+                         on_line=self._console.append, on_done=self._done)
 
     def _done(self, rc):
-        self._progress.stop()
-        self._run_btn.config(state="normal")
+        self._progress.stop(); self._run_btn.config(state="normal")
         if rc == 0:
-            self._status.set("Step 08 complete ✓")
-            self._console.append("[Step 08] Second-level finished.", "ok")
+            self._status.set("Step 09 complete ✓")
+            self._console.append("[Step 09] Threshold map written.", "ok")
         else:
-            self._status.set(f"Step 08 failed (exit {rc})")
-            self._console.append(f"[Step 08] Failed (exit {rc}).", "error")
+            self._status.set(f"Step 09 failed (exit {rc})")
+            self._console.append(f"[Step 09] Failed (exit {rc}).", "error")
+
+
+# ── Step 10 — ROI extraction + spheres ────────────────────────────────────────
+
+class Step10Panel(ttk.Frame):
+    """Step 10: at a coordinate, extract per-subject wcon values, build spheres,
+       and mask a con with the large sphere."""
+
+    def __init__(self, parent, cfg: dict, console: Console,
+                 status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
+        super().__init__(parent, padding=14, **kwargs)
+        self._cfg     = cfg
+        self._console = console
+        self._status  = status_var
+        self._runner  = runner
+
+        self._x_var       = tk.StringVar()
+        self._y_var       = tk.StringVar()
+        self._z_var       = tk.StringVar()
+        self._mode_var    = tk.StringVar(value="mm")
+        self._wcon_var    = tk.StringVar()
+        self._output_var  = tk.StringVar()
+        self._con_var     = tk.StringVar()
+        self._gcon_var    = tk.StringVar()   # group-comparison contrast to mask
+        self._gmask_var   = tk.StringVar()   # 10 mm mask (manually selected)
+        self._rsmall_var  = tk.StringVar(value="5")
+        self._rlarge_var  = tk.StringVar(value="10")
+        self._python_var  = cfg["python_exe"]
+
+        ttk.Label(self, text="Step 10 — ROI extraction + spheres",
+                  font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            self,
+            text=("At a coordinate (e.g. a peak from step09): extract each subject's\n"
+                  "single-voxel + 5 mm-sphere wcon value → CSV, write 5/10 mm sphere masks,\n"
+                  "and mask a manually-selected con with the 10 mm sphere."),
+            foreground="gray", wraplength=600,
+        ).pack(anchor="w", pady=(0, 10))
+
+        cf = ttk.LabelFrame(self, text="Coordinate", padding=(10, 6))
+        cf.pack(fill="x", pady=(0, 8))
+        cr = ttk.Frame(cf); cr.pack(fill="x")
+        ttk.Label(cr, text="X:").pack(side="left")
+        ttk.Entry(cr, textvariable=self._x_var, width=7).pack(side="left", padx=(2, 10))
+        ttk.Label(cr, text="Y:").pack(side="left")
+        ttk.Entry(cr, textvariable=self._y_var, width=7).pack(side="left", padx=(2, 10))
+        ttk.Label(cr, text="Z:").pack(side="left")
+        ttk.Entry(cr, textvariable=self._z_var, width=7).pack(side="left", padx=(2, 16))
+        ttk.Label(cr, text="as:").pack(side="left")
+        ttk.Combobox(cr, textvariable=self._mode_var, width=7, state="readonly",
+                     values=["mm", "voxel"]).pack(side="left", padx=(4, 0))
+
+        pf = ttk.LabelFrame(self, text="Paths", padding=(10, 6))
+        pf.pack(fill="x", pady=(0, 8))
+        PathRow(pf, "wcon dir (per-subject):", mode="dir",
+                var=self._wcon_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Output dir:", mode="dir",
+                var=self._output_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Con to mask (10 mm):", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._con_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Python exe:", mode="file",
+                var=self._python_var, label_width=22).pack(fill="x", pady=2)
+
+        # Mask a group-comparison contrast with a manually-selected mask
+        gm = ttk.LabelFrame(self, text="Mask a group-comparison contrast (manually select both)",
+                            padding=(10, 6))
+        gm.pack(fill="x", pady=(0, 8))
+        PathRow(gm, "Group contrast:", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._gcon_var, label_width=18).pack(fill="x", pady=2)
+        PathRow(gm, "10 mm mask:", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._gmask_var, label_width=18).pack(fill="x", pady=2)
+        ttk.Label(gm, text="Writes <contrast>_groupmasked.nii (values inside the mask, 0 outside).",
+                  foreground="gray", wraplength=560).pack(anchor="w", pady=(2, 0))
+
+        rf = ttk.LabelFrame(self, text="Sphere radii (mm)", padding=(10, 6))
+        rf.pack(fill="x", pady=(0, 8))
+        rr = ttk.Frame(rf); rr.pack(fill="x")
+        ttk.Label(rr, text="Small (values):").pack(side="left")
+        ttk.Entry(rr, textvariable=self._rsmall_var, width=5).pack(side="left", padx=(4, 16))
+        ttk.Label(rr, text="Large (mask con):").pack(side="left")
+        ttk.Entry(rr, textvariable=self._rlarge_var, width=5).pack(side="left", padx=(4, 0))
+
+        ttk.Separator(self).pack(fill="x", pady=8)
+        row = ttk.Frame(self); row.pack(anchor="w")
+        self._run_btn = ttk.Button(row, text="▶  Run Step 10 — Extract", command=self._run)
+        self._run_btn.pack(side="left")
+        self._progress = ttk.Progressbar(row, mode="indeterminate", length=220)
+        self._progress.pack(side="left", padx=12)
+
+    def _run(self):
+        script = str(SCRIPTS_ROOT / "step10_ROI.sh")
+        if not os.path.isfile(script):
+            messagebox.showerror("Error", f"step10_ROI.sh not found:\n{script}"); return
+        x, y, z = (self._x_var.get().strip(), self._y_var.get().strip(), self._z_var.get().strip())
+        if not (x and y and z):
+            messagebox.showerror("Error", "Enter X, Y, Z coordinates."); return
+        wcon = self._wcon_var.get().strip()
+        out  = self._output_var.get().strip()
+        if not wcon or not os.path.isdir(wcon):
+            messagebox.showerror("Error", f"wcon directory not found:\n{wcon}"); return
+        if not out:
+            messagebox.showerror("Error", "Set an output dir."); return
+        con   = self._con_var.get().strip()    # optional
+        gcon  = self._gcon_var.get().strip()   # optional group contrast
+        gmask = self._gmask_var.get().strip()  # optional mask
+        cmd = ["bash", script, x, y, z, wcon, out, con,
+               self._rsmall_var.get().strip() or "5",
+               self._rlarge_var.get().strip() or "10",
+               self._mode_var.get().strip() or "mm",
+               self._python_var.get().strip(),
+               gcon, gmask]
+        self._console.separator()
+        self._console.append(f"[Step 10] ROI extraction at ({x},{y},{z}) {self._mode_var.get()}…", "info")
+        self._console.separator()
+        self._run_btn.config(state="disabled"); self._progress.start(10)
+        self._status.set("Step 10 running…")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append, on_done=self._done)
+
+    def _done(self, rc):
+        self._progress.stop(); self._run_btn.config(state="normal")
+        if rc == 0:
+            self._status.set("Step 10 complete ✓")
+            self._console.append("[Step 10] roi_values.csv + spheres written.", "ok")
+        else:
+            self._status.set(f"Step 10 failed (exit {rc})")
+            self._console.append(f"[Step 10] Failed (exit {rc}).", "error")
 
 
 # ── Step navigation dashboard ─────────────────────────────────────────────────
@@ -3769,118 +4372,255 @@ class StepNav(ttk.Frame):
         self._panels[label].lift()
 
 
-# ── Pipeline sidebar ───────────────────────────────────────────────────────────
+# ── Project inventory ──────────────────────────────────────────────────────────
+
+class ProjectInventory:
+    """Scan the data-project folders (rawdata, sourcedata, derivatives, subject
+    lists) and persist a snapshot to project_inventory.json in the project root.
+    A re-scan diffs against the saved snapshot to report what changed."""
+
+    def __init__(self, cfg: dict):
+        self._cfg = cfg
+
+    # ── locations ─────────────────────────────────────────────────────────────
+    def project_root(self) -> Path:
+        op = self._cfg["out_path"].get().strip()
+        sd = self._cfg["sourcedata"].get().strip()
+        if op and sd and Path(op).parent == Path(sd).parent:
+            return Path(op).parent
+        if sd:
+            return Path(sd).parent
+        return SCRIPTS_ROOT
+
+    def json_path(self) -> Path:
+        return self.project_root() / "project_inventory.json"
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _subdirs(path: str):
+        if not path or not os.path.isdir(path):
+            return []
+        return sorted(d.name for d in Path(path).iterdir()
+                      if d.is_dir() and not d.name.startswith("."))
+
+    @staticmethod
+    def _read_list(path: str):
+        if not path or not os.path.isfile(path):
+            return []
+        with open(path) as f:
+            return [ln.strip() for ln in f if ln.strip()]
+
+    # ── scan ──────────────────────────────────────────────────────────────────
+    def scan(self) -> dict:
+        out_path   = self._cfg["out_path"].get().strip()
+        sourcedata = self._cfg["sourcedata"].get().strip()
+        deriv      = os.path.join(sourcedata, "derivatives") if sourcedata else ""
+        heudiconv  = os.path.join(sourcedata, ".heudiconv") if sourcedata else ""
+
+        inv = {
+            "scanned":      datetime.datetime.now().isoformat(timespec="seconds"),
+            "project_root": str(self.project_root()),
+            "rawdata":      {"path": out_path,   "subjects": self._subdirs(out_path)},
+            "sourcedata":   {"path": sourcedata,
+                             "bids_subjects": [s for s in self._subdirs(sourcedata)
+                                               if s.startswith("sub-")],
+                             "heudiconv":     self._subdirs(heudiconv)},
+            "derivatives":  {},
+            "subject_lists": {
+                "SubjectList":     self._read_list(self._cfg["subjlist"].get().strip()),
+                "SubjectListBIDS": self._read_list(
+                    str(SCRIPTS_ROOT / "utility" / "SubjectListBIDS.txt")),
+            },
+        }
+        if deriv and os.path.isdir(deriv):
+            for sub in self._subdirs(deriv):
+                inv["derivatives"][sub] = self._subdirs(os.path.join(deriv, sub))
+        return inv
+
+    def load(self) -> dict:
+        p = self.json_path()
+        if p.exists():
+            try:
+                with open(p) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def save(self, inv: dict):
+        try:
+            with open(self.json_path(), "w") as f:
+                json.dump(inv, f, indent=2)
+        except Exception:
+            pass
+
+    # ── diff ──────────────────────────────────────────────────────────────────
+    def diff(self, old: dict, new: dict):
+        """Return a list of human-readable change strings (added/removed)."""
+        changes = []
+
+        def _cmp(label, a, b):
+            a, b = set(a or []), set(b or [])
+            for x in sorted(b - a):
+                changes.append(f"+ {label}: {x}")
+            for x in sorted(a - b):
+                changes.append(f"- {label}: {x}")
+
+        if not old:
+            return ["(first scan — baseline saved)"]
+
+        _cmp("rawdata", old.get("rawdata", {}).get("subjects"),
+                        new.get("rawdata", {}).get("subjects"))
+        _cmp("sourcedata", old.get("sourcedata", {}).get("bids_subjects"),
+                           new.get("sourcedata", {}).get("bids_subjects"))
+        _cmp(".heudiconv", old.get("sourcedata", {}).get("heudiconv"),
+                           new.get("sourcedata", {}).get("heudiconv"))
+        old_d, new_d = old.get("derivatives", {}), new.get("derivatives", {})
+        for d in sorted(set(old_d) | set(new_d)):
+            _cmp(f"derivatives/{d}", old_d.get(d), new_d.get(d))
+        old_l, new_l = old.get("subject_lists", {}), new.get("subject_lists", {})
+        for lst in ("SubjectList", "SubjectListBIDS"):
+            _cmp(f"list:{lst}", old_l.get(lst), new_l.get(lst))
+        return changes
+
+    def codes_logs_dir(self) -> Path:
+        return self.project_root() / "codes" / "logs"
+
+    def write_log(self, inv: dict):
+        """Write a dated snapshot to <project>/codes/logs/ on every check."""
+        ld = self.codes_logs_dir()
+        try:
+            ld.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            log_path = ld / f"project_check_{stamp}.json"
+            with open(log_path, "w") as f:
+                json.dump(inv, f, indent=2)
+            return log_path
+        except Exception:
+            return None
+
+    def check(self):
+        """Re-scan, diff, persist the snapshot, and append a dated log.
+        Returns (inv, changes, log_path)."""
+        new = self.scan()
+        old = self.load()
+        changes = self.diff(old, new)
+        self.save(new)
+        log_path = self.write_log(new)
+        return new, changes, log_path
+
+
+# ── Project sidebar ────────────────────────────────────────────────────────────
 
 class SidebarPanel(ttk.Frame):
-    """Left sidebar: per-subject step completion Treeview backed by pipeline_state.json."""
+    """Left sidebar: a project explorer that inventories rawdata / sourcedata /
+    derivatives and the (temporary) subject lists, tracked in project_inventory.json.
+    The Check button re-scans the folders and reports changes."""
 
-    _ICON = {
-        "done":    "✓",
-        "failed":  "✗",
-        "running": "⟳",
-        "flagged": "⚠",
-        "pending": "·",
-        "":        "·",
-    }
-    _TAG = {
-        "done":    "ok",
-        "failed":  "error",
-        "running": "info",
-        "flagged": "warn",
-        "pending": "dim",
-        "":        "dim",
-    }
-
-    def __init__(self, parent, state: PipelineState, **kwargs):
+    def __init__(self, parent, cfg: dict, console: "Console" = None, **kwargs):
         super().__init__(parent, **kwargs)
-        self._state = state
+        self._inv     = ProjectInventory(cfg)
+        self._console = console
 
-        ttk.Label(self, text="Pipeline State",
-                  font=("Helvetica", 11, "bold")).pack(anchor="w", padx=6, pady=(6, 2))
+        header = ttk.Frame(self)
+        header.pack(fill="x", padx=6, pady=(6, 2))
+        ttk.Label(header, text="Project",
+                  font=("Helvetica", 11, "bold")).pack(side="left")
+        ttk.Button(header, text="✓ Check", command=self.check).pack(side="right")
 
-        cols = [key for key, _ in PipelineState.STEPS]
-        self._tv = ttk.Treeview(self, columns=cols, show="tree headings",
-                                height=24, selectmode="browse")
-        self._tv.column("#0", width=130, minwidth=100, stretch=False)
-        self._tv.heading("#0", text="Subject")
-        for key, label in PipelineState.STEPS:
-            self._tv.column(key, width=58, minwidth=44, anchor="center", stretch=False)
-            self._tv.heading(key, text=label)
-        self._tv.tag_configure("ok",    foreground="#4ec9b0")
-        self._tv.tag_configure("error", foreground="#f44747")
-        self._tv.tag_configure("warn",  foreground="#dcdcaa")
-        self._tv.tag_configure("info",  foreground="#9cdcfe")
-        self._tv.tag_configure("dim",   foreground="#6a6a6a")
+        self._root_lbl = ttk.Label(self, foreground="#9cdcfe", font=("Menlo", 9),
+                                   wraplength=300)
+        self._root_lbl.pack(anchor="w", padx=6)
 
-        vsb = ttk.Scrollbar(self, orient="vertical", command=self._tv.yview)
+        tv_frame = ttk.Frame(self)
+        tv_frame.pack(fill="both", expand=True, padx=(6, 0), pady=(4, 4))
+        self._tv = ttk.Treeview(tv_frame, show="tree", selectmode="browse")
+        vsb = ttk.Scrollbar(tv_frame, orient="vertical", command=self._tv.yview)
+        self._tv.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
-        self._tv.pack(side="left", fill="both", expand=True, padx=(6, 0))
+        self._tv.pack(side="left", fill="both", expand=True)
+        self._tv.tag_configure("temp",  foreground="#dcdcaa")
+        self._tv.tag_configure("count", foreground="#4ec9b0")
+        self._tv.tag_configure("empty", foreground="#f44747")
 
-        btn_row = ttk.Frame(self)
-        btn_row.pack(fill="x", side="bottom", pady=(4, 6), padx=6)
-        ttk.Button(btn_row, text="↻", width=3, command=self.refresh).pack(side="left", padx=(0, 2))
-        ttk.Button(btn_row, text="Clear", command=self._clear).pack(side="left")
+        self._scanned_lbl = ttk.Label(self, foreground="#6a6a6a", font=("Menlo", 9))
+        self._scanned_lbl.pack(anchor="w", padx=6, pady=(0, 6))
 
-        # Tooltip: show note on hover
-        self._tv.bind("<Motion>", self._on_hover)
-        self._tooltip = tk.Toplevel(self)
-        self._tooltip.withdraw()
-        self._tooltip.overrideredirect(True)
-        self._tip_lbl = ttk.Label(self._tooltip, background="#ffffcc", relief="solid",
-                                  padding=(4, 2), wraplength=300)
-        self._tip_lbl.pack()
+        # Show the last saved snapshot immediately for fast startup
+        saved = self._inv.load()
+        if saved:
+            self._render(saved)
+        else:
+            self._root_lbl.config(text="(scanning project…)")
 
-        state.on_change(self.refresh)
-        self.refresh()
+        # Auto-check: once on launch, and whenever the project folder changes
+        # (debounced so it doesn't fire on every keystroke).
+        self._autocheck_id = None
+        cfg["sourcedata"].trace_add("write", self._schedule_autocheck)
+        self._schedule_autocheck()
 
-    def refresh(self):
+    # ── actions ───────────────────────────────────────────────────────────────
+    def check(self):
+        inv, changes, log_path = self._inv.check()
+        self._render(inv)
+        if self._console:
+            self._console.separator()
+            self._console.append(f"[Project] Checked {inv['project_root']}", "info")
+            if changes:
+                for c in changes:
+                    tag = "ok" if c.startswith("+") else ("warn" if c.startswith("-") else "dim")
+                    self._console.append(f"  {c}", tag)
+            else:
+                self._console.append("  No changes since last check.", "dim")
+            self._console.append(f"[Project] Inventory saved: {self._inv.json_path()}", "dim")
+            if log_path:
+                self._console.append(f"[Project] Log: {log_path}", "dim")
+
+    def _schedule_autocheck(self, *_):
+        """Debounced auto-check — fires once the project folder stops changing."""
+        if self._autocheck_id is not None:
+            try:
+                self.after_cancel(self._autocheck_id)
+            except Exception:
+                pass
+        self._autocheck_id = self.after(700, self._maybe_autocheck)
+
+    def _maybe_autocheck(self):
+        self._autocheck_id = None
+        sd = self._inv._cfg["sourcedata"].get().strip()
+        if sd and os.path.isdir(sd):
+            self.check()
+
+    # ── rendering ─────────────────────────────────────────────────────────────
+    def _render(self, inv: dict):
         self._tv.delete(*self._tv.get_children())
-        step_keys = [k for k, _ in PipelineState.STEPS]
-        for subj in self._state.subjects():
-            values = []
-            worst_tag = "dim"
-            priority  = ["error", "warn", "ok", "info", "dim"]
-            for key in step_keys:
-                st   = self._state.get_status(subj, key)
-                icon = self._ICON.get(st, "·")
-                tag  = self._TAG.get(st, "dim")
-                values.append(icon)
-                if priority.index(tag) < priority.index(worst_tag):
-                    worst_tag = tag
-            self._tv.insert("", "end", iid=subj, text=subj, values=values, tags=(worst_tag,))
+        self._root_lbl.config(text=inv.get("project_root", ""))
+        self._scanned_lbl.config(text=f"scanned: {inv.get('scanned', '—')}")
 
-    def _clear(self):
-        if messagebox.askyesno("Clear state?",
-                               "Reset pipeline_state.json for all subjects?"):
-            self._state._data.clear()
-            self._state.save()
-            self.refresh()
+        def node(parent, text, items=None, temp=False):
+            n = len(items) if items is not None else None
+            label = text if n is None else f"{text}  ({n})"
+            tag = "temp" if temp else ("count" if n else ("empty" if n == 0 else ""))
+            iid = self._tv.insert(parent, "end", text=label, open=False, tags=(tag,))
+            for it in (items or []):
+                self._tv.insert(iid, "end", text=it)
+            return iid
 
-    def _on_hover(self, event):
-        item = self._tv.identify_row(event.y)
-        col  = self._tv.identify_column(event.x)
-        if not item or col == "#0":
-            self._tooltip.withdraw()
-            return
-        col_idx = int(col.replace("#", "")) - 1
-        if col_idx < 0 or col_idx >= len(PipelineState.STEPS):
-            self._tooltip.withdraw()
-            return
-        step_key = PipelineState.STEPS[col_idx][0]
-        note = self._state.get_note(item, step_key)
-        time_ = self._state._data.get(item, {}).get(step_key, {}).get("time", "")
-        if not note and not time_:
-            self._tooltip.withdraw()
-            return
-        tip_text = f"{item} / {step_key}"
-        if time_:  tip_text += f"\n{time_}"
-        if note:   tip_text += f"\n{note}"
-        self._tip_lbl.config(text=tip_text)
-        x = event.x_root + 12
-        y = event.y_root + 12
-        self._tooltip.geometry(f"+{x}+{y}")
-        self._tooltip.deiconify()
-        self._tooltip.lift()
+        node("", "rawdata",    inv.get("rawdata", {}).get("subjects", []))
+        sd = inv.get("sourcedata", {})
+        sd_node = node("", "sourcedata", sd.get("bids_subjects", []))
+        node(sd_node, ".heudiconv", sd.get("heudiconv", []))
+
+        deriv = inv.get("derivatives", {})
+        d_node = self._tv.insert("", "end", text=f"derivatives  ({len(deriv)})",
+                                 open=True, tags=("count" if deriv else "empty",))
+        for name in sorted(deriv):
+            node(d_node, name, deriv[name])
+
+        lists = inv.get("subject_lists", {})
+        l_node = self._tv.insert("", "end", text="subject lists (temporary)", open=True)
+        node(l_node, "SubjectList.txt",     lists.get("SubjectList", []),     temp=True)
+        node(l_node, "SubjectListBIDS.txt", lists.get("SubjectListBIDS", []), temp=True)
 
 
 # ── Main Application ───────────────────────────────────────────────────────────
@@ -3912,6 +4652,14 @@ class App(tk.Tk):
         runner     = ScriptRunner(self)
         pipeline   = PipelineState(SCRIPTS_ROOT / "pipeline_state.json")
 
+        # Auto-derive the fMRIPrep derivatives dir from BIDS sourcedata
+        # (unless the user has set it to something else).
+        def _derive_fmriprep(*_):
+            sd = cfg["sourcedata"].get().strip()
+            if sd:
+                cfg["fmriprep"].set(str(Path(sd) / "derivatives" / "fmriprep"))
+        cfg["sourcedata"].trace_add("write", _derive_fmriprep)
+
         # ── Status bar (packed bottom first so it always shows) ───────────────
         ttk.Label(self, textvariable=status_var,
                   relief="sunken", anchor="w",
@@ -3923,23 +4671,23 @@ class App(tk.Tk):
         h_pane = ttk.PanedWindow(self, orient="horizontal")
         h_pane.pack(fill="both", expand=True, padx=6, pady=(0, 4))
 
-        # Left pane — Pipeline State sidebar (resizable width)
-        sidebar_frame = ttk.Frame(h_pane)
-        sidebar = SidebarPanel(sidebar_frame, pipeline)
-        sidebar.pack(fill="both", expand=True)
-        h_pane.add(sidebar_frame, weight=0)
-
         # Right pane — vertical split: step nav (top) | console (bottom)
         v_pane = ttk.PanedWindow(h_pane, orient="vertical")
-        h_pane.add(v_pane, weight=1)
 
-        # Console (resizable height, minimum visible at all times)
+        # Console (created before the sidebar so the sidebar can log to it)
         con_frame = ttk.LabelFrame(v_pane, text="Console Output", padding=(6, 4))
         console = Console(con_frame)
         console.pack(fill="both", expand=True)
         btn_bar = ttk.Frame(con_frame)
         btn_bar.pack(fill="x", pady=(4, 0))
         ttk.Button(btn_bar, text="Clear", command=console.clear).pack(side="right")
+
+        # Left pane — Project explorer sidebar (resizable width)
+        sidebar_frame = ttk.Frame(h_pane)
+        sidebar = SidebarPanel(sidebar_frame, cfg, console)
+        sidebar.pack(fill="both", expand=True)
+        h_pane.add(sidebar_frame, weight=0)
+        h_pane.add(v_pane, weight=1)
 
         # Step navigation (resizable height)
         nav_frame = ttk.Frame(v_pane)
@@ -3979,6 +4727,8 @@ class App(tk.Tk):
         t_step06 = panel(Step06Panel,    cfg, console, status_var, runner)
         t_step07 = panel(Step07Panel,    cfg, console, status_var, runner)
         t_step08 = panel(Step08Panel,    cfg, console, status_var, runner)
+        t_step09 = panel(Step09Panel,    cfg, console, status_var, runner)
+        t_step10 = panel(Step10Panel,    cfg, console, status_var, runner)
         t_heur   = panel(HeuristicPanel, cfg, console, status_var)
 
         nav.add("⚙  Setup",               t_setup,  section="Config")
@@ -3991,6 +4741,8 @@ class App(tk.Tk):
         nav.add("06  Stim Triggers",      t_step06)
         nav.add("07  First-level + MNI",  t_step07)
         nav.add("08  Second-level",       t_step08)
+        nav.add("09  Threshold p<0.05",   t_step09)
+        nav.add("10  ROI extraction",     t_step10)
         nav.add("∷  Heuristic",           t_heur,   section="Tools")
 
         # Expose console/status so Save/Load config can report progress

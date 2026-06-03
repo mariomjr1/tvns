@@ -40,6 +40,13 @@
 #   tr                TR seconds                 default: 1.19
 #   smooth_fwhm       smoothing mm (one number) default: 3
 #   do_mni            1 = warp to MNI, 0 = skip  default: 1
+#   env_script        environment script to source (MATLAB on PATH, etc.)
+#                     default: <script_dir>/utility/fmriprep_env.sh
+#                     pass "none" to skip sourcing entirely
+#   warp_only         1 = only warp existing con_*.nii, skip GLM; 0 = full GLM
+#                     default: 0
+#   use_sourcedata    1 = look for stim in sourcedata/physio/<subj>/stimtrigger/
+#                     0 = use firstlevel_dir/stim_onsets/; default: 0
 # ============================================================================
 
 set -euo pipefail
@@ -58,6 +65,11 @@ RUN="${9:-01}"
 TR="${10:-1.19}"
 SMOOTH="${11:-3}"
 DO_MNI="${12:-1}"
+# Environment script to source (gets MATLAB on PATH, etc.).
+# Default: utility/fmriprep_env.sh. Pass "none" (or "") to skip sourcing.
+ENV_SCRIPT="${13:-${SCRIPT_DIR}/utility/fmriprep_env.sh}"
+WARP_ONLY="${14:-0}"
+USE_SOURCEDATA="${15:-0}"
 
 FMRIPREP_DIR="${SOURCEDATA}/derivatives/fmriprep"
 
@@ -65,10 +77,16 @@ echo "============================================"
 echo " STEP 07 — First-level GLM + MNI warp"
 echo " Subject list:  ${SUBJECT_LIST}"
 echo " fMRIPrep:      ${FMRIPREP_DIR}"
-echo " First-level:   ${FIRSTLEVEL_DIR}"
-echo " Output:        ${OUTPUT_DIR}"
+if [ "${WARP_ONLY}" = "1" ]; then
+    echo " MODE:          Warp-only (skip GLM)"
+    echo " Output:        ${OUTPUT_DIR}"
+else
+    echo " First-level:   ${FIRSTLEVEL_DIR}"
+    echo " Output:        ${OUTPUT_DIR}"
+fi
 echo " SPM:           ${SPM_DIR}"
-echo " TR=${TR}  Smooth=${SMOOTH}mm  Session=ses-${SESSION}  DoMNI=${DO_MNI}"
+echo " Env script:    ${ENV_SCRIPT}"
+echo " TR=${TR}  Smooth=${SMOOTH}mm  Session=ses-${SESSION}  DoMNI=${DO_MNI}  WarpOnly=${WARP_ONLY}  UseSourcedata=${USE_SOURCEDATA}"
 echo " Date:          $(date)"
 echo "============================================"
 echo ""
@@ -88,12 +106,34 @@ if [ ! -f "${matlab_glm}" ]; then
     exit 1
 fi
 
-[ -f "${SCRIPT_DIR}/utility/fmriprep_env.sh" ] && source "${SCRIPT_DIR}/utility/fmriprep_env.sh"
+# Source the chosen environment script.
+# FreeSurfer/FSL setup scripts reference unset variables (e.g.
+# FS_FREESURFERENV_NO_OUTPUT), which trips `set -u`; and they may return
+# non-zero, which trips `set -e`. Disable both only around the source.
+if [ -n "${ENV_SCRIPT}" ] && [ "${ENV_SCRIPT}" != "none" ]; then
+    if [ -f "${ENV_SCRIPT}" ]; then
+        echo " Sourcing environment: ${ENV_SCRIPT}"
+        set +eu
+        # shellcheck disable=SC1090
+        source "${ENV_SCRIPT}"
+        set -eu
+    else
+        echo " WARNING: environment script not found: ${ENV_SCRIPT}"
+        echo "          continuing without it (make sure 'matlab' is on PATH)."
+    fi
+fi
 
 mkdir -p "${OUTPUT_DIR}"
 
 # Convert do_mni (1/0) to MATLAB true/false
 if [ "${DO_MNI}" = "1" ]; then DOMNI_ML="true"; else DOMNI_ML="false"; fi
+if [ "${WARP_ONLY}" = "1" ]; then WARPONLY_ML="true"; else WARPONLY_ML="false"; fi
+
+# Determine SourceData path if USE_SOURCEDATA is enabled
+SOURCEDATA_ARG=""
+if [ "${USE_SOURCEDATA}" = "1" ]; then
+    SOURCEDATA_ARG="'SourceData', '${SOURCEDATA}', "
+fi
 
 # ── Run MATLAB ────────────────────────────────────────────────────────────────
 matlab_cmd="set(0,'DefaultFigureVisible','off'); \
@@ -108,7 +148,10 @@ glm_spm_firstlevel_mni_v2( \
     'Session', '${SESSION}', \
     'Run', '${RUN}', \
     'SmoothFWHM', [${SMOOTH} ${SMOOTH} ${SMOOTH}], \
-    'DoMNI', ${DOMNI_ML} );"
+    'DoMNI', ${DOMNI_ML}, \
+    'WarpOnly', ${WARPONLY_ML}, \
+    ${SOURCEDATA_ARG} \
+    'SmoothPrefix', 's3' );"
 
 echo "Running MATLAB first-level + MNI..."
 "${MATLAB_EXE}" -nodisplay -nosplash -batch "${matlab_cmd}"

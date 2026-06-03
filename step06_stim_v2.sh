@@ -64,13 +64,16 @@ SOURCEDATA="${2:-/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata}"
 PARSED_DIR="${3:-${SOURCEDATA}/derivatives/physio/${BIDS_SUBJ}/parsed}"
 STIM_DIR="${4:-${SOURCEDATA}/derivatives/physio/${BIDS_SUBJ}/stimtrigger}"
 FMRIPREP_DIR="${5:-${SOURCEDATA}/derivatives/fmriprep}"
-FIRSTLEVEL_DIR="${6:-${SOURCEDATA}/derivatives/physio/${BIDS_SUBJ}/first_level}"
+# Shared first-level folder (NOT per-subject): step07 reads every subject's
+# files from one place. Files are named by subject, so they coexist.
+FIRSTLEVEL_DIR="${6:-${SOURCEDATA}/derivatives/physio/first_level}"
 SESSION="${7:-01}"
 THRESHOLD="${8:-1.5}"
 DEBOUNCE="${9:-1.5}"
 PYTHON="${10:-python3}"
 DO_QC="${11:-0}"
 SKIP_FIRSTLEVEL="${12:-0}"
+RETROICOR_OUTPUT="${13:-${SOURCEDATA}/derivatives/physio/${BIDS_SUBJ}/retroicor/output}"
 
 EXTRACTOR="${SCRIPT_DIR}/utility/extract_stim_onsets.py"
 
@@ -82,6 +85,7 @@ echo " Stim dir:   ${STIM_DIR}"
 echo " Session:    ses-${SESSION}"
 echo " Threshold:  ${THRESHOLD}  Debounce: ${DEBOUNCE} s"
 echo " QC plots:   ${DO_QC}"
+echo " Retroicor output: ${RETROICOR_OUTPUT}"
 echo " Date:       $(date)"
 echo "============================================"
 echo ""
@@ -171,9 +175,9 @@ fi
 echo ""
 
 # ── PART 3: Prepare first-level folder ────────────────────────────────────────
-# Assembles stim files, motion regressors (from fMRIPrep confounds), and
-# T1w-space BOLD files into a self-contained first_level/ folder for the GLM.
-# OPTIONAL — skip with SKIP_FIRSTLEVEL=1.
+# Assembles stim files, motion regressors (from fMRIPrep confounds), retroicor
+# regressors, and T1w-space BOLD files into a self-contained first_level/ folder
+# for the GLM. OPTIONAL — skip with SKIP_FIRSTLEVEL=1.
 if [ "${SKIP_FIRSTLEVEL}" = "1" ]; then
     echo "PART 3: Skipped (SKIP_FIRSTLEVEL=1)."
 else
@@ -181,36 +185,53 @@ else
     echo " PART 3: Prepare first-level folder (optional)"
     echo "============================================"
 
-    mkdir -p "${FIRSTLEVEL_DIR}/stim_onsets" \
-             "${FIRSTLEVEL_DIR}/motion_regressors" \
-             "${FIRSTLEVEL_DIR}/bolds"
+    # Numbered sub-folders (ordered, self-documenting). The GLM (step07) also
+    # accepts the legacy unnumbered names for backward compatibility.
+    D_STIM="${FIRSTLEVEL_DIR}/01_stim_onsets"
+    D_MOTION="${FIRSTLEVEL_DIR}/02_motion_regressors"
+    D_RETRO="${FIRSTLEVEL_DIR}/03_retroicor_regressors"
+    D_BOLD="${FIRSTLEVEL_DIR}/04_bolds"
+    mkdir -p "${D_STIM}" "${D_MOTION}" "${D_RETRO}" "${D_BOLD}"
 
     # Stim files
     n_stim=0
     for f in "${STIM_DIR}"/*_bold_stim.txt; do
         [ -f "$f" ] || continue
-        cp -f "$f" "${FIRSTLEVEL_DIR}/stim_onsets/"
+        cp -f "$f" "${D_STIM}/"
         n_stim=$((n_stim+1))
     done
     echo " Stim files:      ${n_stim}"
 
-    # Motion regressors from fMRIPrep confounds (*_nuisance_regressors_for_GLM_no_header.txt)
+    # Motion regressors from fMRIPrep (*_motion_regressors.txt).
+    # They may live in the subject ROOT (<subj>/<subj>_ses-..._motion_regressors.txt)
+    # or in the func dir (<subj>/ses-01/func/...). Search both.
+    fmriprep_subj="${FMRIPREP_DIR}/${BIDS_SUBJ}"
     n_motion=0
-    if [ -d "${fmriprep_func:-/nonexistent}" ]; then
-        for f in "${fmriprep_func}"/*_nuisance_regressors_for_GLM_no_header.txt; do
+    for f in "${fmriprep_subj}"/*_motion_regressors.txt \
+             "${fmriprep_func}"/*_motion_regressors.txt; do
+        [ -f "$f" ] || continue
+        cp -f "$f" "${D_MOTION}/"
+        n_motion=$((n_motion+1))
+    done
+    echo " Motion regressors (fMRIPrep): ${n_motion}"
+
+    # Retroicor regressors (*_retro-regressors.mat)
+    n_retro=0
+    if [ -d "${RETROICOR_OUTPUT:-/nonexistent}" ]; then
+        for f in "${RETROICOR_OUTPUT}"/*_retro-regressors.mat; do
             [ -f "$f" ] || continue
-            cp -f "$f" "${FIRSTLEVEL_DIR}/motion_regressors/"
-            n_motion=$((n_motion+1))
+            cp -f "$f" "${D_RETRO}/"
+            n_retro=$((n_retro+1))
         done
     fi
-    echo " Motion regressors: ${n_motion} (0 = run step15 first)"
+    echo " Retroicor regressors: ${n_retro}"
 
     # T1w-space preprocessed BOLD from fMRIPrep
     n_bolds=0
     if [ -d "${fmriprep_func:-/nonexistent}" ]; then
         for f in "${fmriprep_func}"/*_space-T1w_desc-preproc_bold.nii.gz; do
             [ -f "$f" ] || continue
-            cp -f "$f" "${FIRSTLEVEL_DIR}/bolds/"
+            cp -f "$f" "${D_BOLD}/"
             n_bolds=$((n_bolds+1))
         done
     fi

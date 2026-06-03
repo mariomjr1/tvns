@@ -14,15 +14,15 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 %       firstlevel_dir, output_dir, spm_dir)
 %   glm_spm_firstlevel_mni_v2(..., 'TR',1.19, 'Tasks',{'BlockStim','ContinuousStim','rest'}, ...
 %       'Session','01', 'Run','01', 'SmoothFWHM',[3 3 3], 'DoMNI',true, ...
-%       'MNIRef','', 'SmoothPrefix','s3')
+%       'MNIRef','', 'SmoothPrefix','s3', 'WarpOnly',false, 'SourceData','')
 %
 % Required:
 %   subject_list_file  text file, one BIDS subject per line (sub-XXXX...)
 %   fmriprep_dir       derivatives/fmriprep root
 %                      BOLD: <subj>/ses-<ses>/func/<subj>_ses-<ses>_task-<task>_run-<run>_space-T1w_desc-preproc_bold.nii.gz
 %                      MASK: <subj>/ses-<ses>/func/<subj>_ses-<ses>_task-<task>_run-<run>_space-T1w_desc-brain_mask.nii.gz
-%                      T1w : <subj>/anat/<subj>_desc-preproc_T1w.nii.gz  (for MNI warp)
-%   firstlevel_dir     folder from step06 with stim_onsets/ and motion_regressors/
+%                      T1w : <subj>/ses-<ses>/anat/ OR <subj>/anat/ *_desc-preproc_T1w.nii.gz (MNI warp)
+%   firstlevel_dir     folder from step06 with stim_onsets/ and motion_regressors/ OR sourcedata root
 %   output_dir         where to write first-level GLM outputs
 %   spm_dir            SPM12 installation path
 %
@@ -35,6 +35,8 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 %   SmoothPrefix  string (default 's3')
 %   DoMNI         logical — also warp contrasts to MNI (default true)
 %   MNIRef        MNI reference image; '' uses spm canonical avg152T1 (default '')
+%   WarpOnly      logical — skip GLM, only warp existing con_*.nii to MNI (default false)
+%   SourceData    sourcedata root dir; if provided, look for stim in sourcedata/derivatives/physio/<subj>/stimtrigger/
 %
 % Output per subject/task:
 %   output_dir/<subj>/<task>/SPM.mat, con_0001.nii, con_0002.nii, ...
@@ -57,6 +59,8 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     addParameter(p, 'SmoothPrefix', 's3',  @(x) ischar(x)||isstring(x));
     addParameter(p, 'DoMNI',        true,  @(x) islogical(x)||isnumeric(x));
     addParameter(p, 'MNIRef',       '',    @(x) ischar(x)||isstring(x));
+    addParameter(p, 'WarpOnly',     false, @(x) islogical(x)||isnumeric(x));
+    addParameter(p, 'SourceData',   '',    @(x) ischar(x)||isstring(x));
     parse(p, subject_list_file, fmriprep_dir, firstlevel_dir, output_dir, spm_dir, varargin{:});
 
     R   = p.Results;
@@ -67,6 +71,8 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     smooth_fwhm   = R.SmoothFWHM;
     smooth_prefix = char(R.SmoothPrefix);
     do_mni = logical(R.DoMNI);
+    warp_only = logical(R.WarpOnly);
+    source_data = char(R.SourceData);
     spm_dir = char(R.spm_dir);
 
     % ── Setup SPM ─────────────────────────────────────────────────────────────
@@ -83,8 +89,16 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
         mni_ref = char(R.MNIRef);
     end
 
-    stim_dir   = fullfile(firstlevel_dir, 'stim_onsets');
-    motion_dir = fullfile(firstlevel_dir, 'motion_regressors');
+    % ── Detect stim/motion directories ────────────────────────────────────────
+    % If SourceData is provided, look in sourcedata/derivatives/physio/<subj>/stimtrigger/
+    % Otherwise, look in firstlevel_dir/stim_onsets/ (backward compatible)
+    % Sub-folders are numbered (01_stim_onsets, ...) by step06; fall back to the
+    % unnumbered names so older datasets still work.
+    use_physio_subj_dir = ~isempty(source_data);
+    if ~use_physio_subj_dir
+        stim_dir   = pick_dir(firstlevel_dir, {'01_stim_onsets', 'stim_onsets'});
+        motion_dir = pick_dir(firstlevel_dir, {'02_motion_regressors', 'motion_regressors'});
+    end
 
     % ── Read subjects ─────────────────────────────────────────────────────────
     subs = read_subject_list(subject_list_file);
@@ -93,18 +107,31 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     fprintf('========================================\n');
     fprintf(' Subjects:   %d\n', numel(subs));
     fprintf(' fMRIPrep:   %s\n', fmriprep_dir);
-    fprintf(' First-lvl:  %s\n', firstlevel_dir);
+    if ~warp_only
+        fprintf(' First-lvl:  %s\n', firstlevel_dir);
+    end
     fprintf(' Output:     %s\n', output_dir);
     fprintf(' Tasks:      %s\n', strjoin(tasks, ', '));
-    fprintf(' TR=%.3f  Smooth=%s  DoMNI=%d\n\n', TR, mat2str(smooth_fwhm), do_mni);
+    if warp_only
+        fprintf(' MODE:       Warp-only (skip GLM, only warp existing con_*.nii)\n');
+    else
+        fprintf(' TR=%.3f  Smooth=%s  DoMNI=%d\n', TR, mat2str(smooth_fwhm), do_mni);
+    end
+    fprintf('\n');
 
     % ── Main loop ─────────────────────────────────────────────────────────────
     for i = 1:numel(subs)
         subj = normalize_subj(subs{i});
         fprintf('\n=== Subject: %s ===\n', subj);
 
+        % Set per-subject stim/motion directories if using SourceData
+        if use_physio_subj_dir
+            stim_dir   = fullfile(source_data, 'derivatives', 'physio', subj, 'stimtrigger');
+            motion_dir = fullfile(source_data, 'derivatives', 'physio', subj, 'motion_regressors');
+        end
+
         func_dir = fullfile(fmriprep_dir, subj, ['ses-' ses], 'func');
-        anat_dir = fullfile(fmriprep_dir, subj, 'anat');
+        % T1w is located via find_t1w() (handles <subj>/anat and <subj>/ses-XX/anat)
 
         for t = 1:numel(tasks)
             task = tasks{t};
@@ -114,6 +141,26 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
             if ~exist(task_out, 'dir'), mkdir(task_out); end
             workdir = fullfile(task_out, 'work');
             if ~exist(workdir, 'dir'), mkdir(workdir); end
+
+            % ── WARP-ONLY MODE: Skip GLM, only warp existing con_*.nii ────────
+            if warp_only
+                if do_mni
+                    t1_gz = find_t1w(fmriprep_dir, subj, ses);
+                    if isempty(t1_gz)
+                        warning('No T1w for MNI warp (skip): %s', subj);
+                    else
+                        con_files = dir(fullfile(task_out, 'con_*.nii'));
+                        if ~isempty(con_files)
+                            fprintf('Warping %d contrast(s)...\n', numel(con_files));
+                            warp_cons_to_mni(t1_gz, {con_files.name}, task_out, ...
+                                           mni_ref, spm_dir, workdir);
+                        else
+                            warning('No con_*.nii found in %s (skip warp)', task_out);
+                        end
+                    end
+                end
+                continue;  % Skip GLM
+            end
 
             % ── LOCATE (not copy) BOLD + mask in fMRIPrep func dir ────────────
             bold_gz = fullfile(func_dir, sprintf( ...
@@ -140,20 +187,28 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
                 mask_in_bold = coreg_reslice_mask_to_bold(mask_nii, bold_nii, mask_in_bold);
             end
 
-            % Smooth the BOLD
-            scans_bold = cellstr(spm_select('expand', bold_nii));
+            % ── Check if already smoothed (s3sub* pattern) ────────────────────
             [~, bn, be] = fileparts(bold_nii);
             smoothed = fullfile(workdir, [smooth_prefix bn be]);
-            if ~exist(smoothed, 'file')
-                mb = [];
-                mb{1}.spm.spatial.smooth.data   = scans_bold;
-                mb{1}.spm.spatial.smooth.fwhm   = smooth_fwhm;
-                mb{1}.spm.spatial.smooth.dtype  = 0;
-                mb{1}.spm.spatial.smooth.im     = 0;
-                mb{1}.spm.spatial.smooth.prefix = smooth_prefix;
-                spm_jobman('run', mb);
+            already_smoothed = startsWith(basename(bold_nii), smooth_prefix);
+            
+            if already_smoothed
+                fprintf('  Already smoothed (detected %s prefix) — skipping smoothing\n', smooth_prefix);
+                scans_sm = cellstr(spm_select('expand', bold_nii));
+            else
+                % Smooth the BOLD
+                scans_bold = cellstr(spm_select('expand', bold_nii));
+                if ~exist(smoothed, 'file')
+                    mb = [];
+                    mb{1}.spm.spatial.smooth.data   = scans_bold;
+                    mb{1}.spm.spatial.smooth.fwhm   = smooth_fwhm;
+                    mb{1}.spm.spatial.smooth.dtype  = 0;
+                    mb{1}.spm.spatial.smooth.im     = 0;
+                    mb{1}.spm.spatial.smooth.prefix = smooth_prefix;
+                    spm_jobman('run', mb);
+                end
+                scans_sm = cellstr(spm_select('expand', smoothed));
             end
-            scans_sm = cellstr(spm_select('expand', smoothed));
 
             % ── Stim condition ────────────────────────────────────────────────
             stim_file = fullfile(stim_dir, sprintf( ...
@@ -182,6 +237,61 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
                 motion_file = '';
             end
 
+            % ── Retroicor regressors (optional) ────────────────────────────────
+            % BIDS bold base used by retroicor_batch for *_retro-regressors.mat
+            % (the ORIGINAL bold, not the space-T1w preproc name).
+            boldbase  = sprintf('%s_ses-%s_task-%s_run-%s_bold', subj, ses, task, run);
+            retro_dir = pick_dir(firstlevel_dir, {'03_retroicor_regressors', 'retroicor_regressors'});
+            retro_file = '';
+            if isdir(retro_dir)
+                retro_mat_files = dir(fullfile(retro_dir, [boldbase '_retro-regressors.mat']));
+                if ~isempty(retro_mat_files)
+                    retro_mat_path = fullfile(retro_dir, retro_mat_files(1).name);
+                    % Load REGRESSORS from mat file and convert to txt for SPM
+                    temp = load(retro_mat_path);
+                    if isfield(temp, 'REGRESSORS') && ~isempty(temp.REGRESSORS)
+                        % REGRESSORS dimensions: #timepoints x #regressors x #slices
+                        % Average across slices for multi-slice regressors
+                        RETRO_regressors = mean(temp.REGRESSORS, 3);
+                        retro_file = fullfile(task_out, [boldbase '_retro-regressors.txt']);
+                        writematrix(RETRO_regressors, retro_file, 'Delimiter', ' ');
+                        fprintf('  Loaded retroicor regressors: %s\n', retro_mat_path);
+                    end
+                end
+            end
+
+            % ── Combine motion + retroicor regressors ──────────────────────────
+            combined_regress_file = '';
+            if ~isempty(motion_file) || ~isempty(retro_file)
+                combined_regress_file = fullfile(task_out, [boldbase '_combined_regressors.txt']);
+                regressors_to_write = [];
+                
+                % Load motion regressors if available
+                if ~isempty(motion_file) && exist(motion_file, 'file')
+                    motion_data = readmatrix(motion_file);
+                    if size(motion_data, 1) > 0
+                        regressors_to_write = motion_data;
+                    end
+                end
+                
+                % Append retroicor regressors if available
+                if ~isempty(retro_file) && exist(retro_file, 'file')
+                    retro_data = readmatrix(retro_file);
+                    if size(retro_data, 1) > 0
+                        if isempty(regressors_to_write)
+                            regressors_to_write = retro_data;
+                        else
+                            regressors_to_write = [regressors_to_write, retro_data];
+                        end
+                    end
+                end
+                
+                % Write combined regressors file if we have data
+                if ~isempty(regressors_to_write)
+                    writematrix(regressors_to_write, combined_regress_file, 'Delimiter', ' ');
+                end
+            end
+
             % ── Specify + estimate ────────────────────────────────────────────
             mb = [];
             mb{1}.spm.stats.fmri_spec.dir = {task_out};
@@ -193,7 +303,7 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
             mb{1}.spm.stats.fmri_spec.sess(1).cond  = cond;
             mb{1}.spm.stats.fmri_spec.sess(1).multi = {''};
             mb{1}.spm.stats.fmri_spec.sess(1).regress = struct('name', {}, 'val', {});
-            mb{1}.spm.stats.fmri_spec.sess(1).multi_reg = { iff(~isempty(motion_file), motion_file, '') };
+            mb{1}.spm.stats.fmri_spec.sess(1).multi_reg = { iff(~isempty(combined_regress_file), combined_regress_file, iff(~isempty(motion_file), motion_file, '')) };
             mb{1}.spm.stats.fmri_spec.sess(1).hpf = 128;
             mb{1}.spm.stats.fmri_spec.bases.hrf.derivs = [0 0];
             mb{1}.spm.stats.fmri_spec.volt    = 1;
@@ -226,16 +336,9 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 
             % ── MNI warp ──────────────────────────────────────────────────────
             if do_mni
-                t1_gz  = fullfile(anat_dir, sprintf('%s_desc-preproc_T1w.nii.gz', subj));
-                if ~exist(t1_gz, 'file')
-                    % fallback: any *_desc-preproc_T1w.nii.gz in anat
-                    cand = dir(fullfile(anat_dir, '*_desc-preproc_T1w.nii.gz'));
-                    if ~isempty(cand)
-                        t1_gz = fullfile(cand(1).folder, cand(1).name);
-                    end
-                end
-                if ~exist(t1_gz, 'file')
-                    warning('No T1w for MNI warp (skip warp): %s', t1_gz);
+                t1_gz = find_t1w(fmriprep_dir, subj, ses);
+                if isempty(t1_gz)
+                    warning('No T1w for MNI warp (skip warp): %s', subj);
                 else
                     con_files = dir(fullfile(task_out, 'con_*.nii'));
                     warp_cons_to_mni(t1_gz, {con_files.name}, task_out, ...
@@ -339,6 +442,39 @@ end
 function subj = normalize_subj(s)
     s = strtrim(s);
     if startsWith(s, 'sub-'), subj = s; else, subj = ['sub-' s]; end
+end
+
+function d = pick_dir(base, names)
+% Return base/<name> for the first name that exists; else base/<first name>.
+% Lets the GLM accept both numbered (01_stim_onsets) and legacy (stim_onsets)
+% sub-folder schemes.
+    d = fullfile(base, names{1});
+    for k = 1:numel(names)
+        cand = fullfile(base, names{k});
+        if exist(cand, 'dir'), d = cand; return; end
+    end
+end
+
+function t1 = find_t1w(fmriprep_dir, subj, ses)
+% Locate the native-space preprocessed T1w, handling both fMRIPrep layouts:
+%   <subj>/ses-<ses>/anat/   (session-anat — most common with sessions)
+%   <subj>/anat/             (no-session anat)
+% Prefers the native T1w (no 'space-' entity). Returns '' if not found.
+    t1 = '';
+    anat_dirs = { fullfile(fmriprep_dir, subj, ['ses-' ses], 'anat'), ...
+                  fullfile(fmriprep_dir, subj, 'anat') };
+    for d = 1:numel(anat_dirs)
+        ad = anat_dirs{d};
+        if ~exist(ad, 'dir'), continue; end
+        cand = dir(fullfile(ad, '*_desc-preproc_T1w.nii.gz'));
+        if isempty(cand), continue; end
+        % Prefer a filename WITHOUT a 'space-' entity (i.e. native T1w)
+        names = {cand.name};
+        native = find(~contains(names, 'space-'), 1);
+        if isempty(native), native = 1; end
+        t1 = fullfile(cand(native).folder, cand(native).name);
+        return;
+    end
 end
 
 function out = gunzip_to(gz_file, dest_dir)
