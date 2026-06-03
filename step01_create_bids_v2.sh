@@ -22,33 +22,59 @@ heuristic=/autofs/cluster/vagabond/USERS/MARIO/Pipelines/9_tvns/utility/heuristi
 SUBJ_LIST=${1:-"${SCRIPT_DIR}/utility/SubjectList.txt"}
 
 # ── Loop subjects ──────────────────────────────────────────────────────────────
+# A subject may have one raw folder (.../DICOM/raw) or several from step00
+# (.../DICOM/raw_01, raw_02, …). Each raw folder is converted as its own BIDS
+# session: plain "raw" → ses-01; "raw_NN" → ses-NN.
 while IFS= read -r subj_id; do
+    [ -z "${subj_id}" ] && continue
 
-    dicom_dir=${raw_path}/${subj_id}/DICOM/raw
+    dcm_root="${raw_path}/${subj_id}/DICOM"
 
     echo ""
     echo "============================================"
     echo " Subject : ${subj_id}"
-    echo " DICOMs  : ${dicom_dir}"
     echo "============================================"
 
-    if [ ! -d "${dicom_dir}" ]; then
-        echo "WARNING: DICOM directory not found, skipping ${subj_id}"
+    # Collect raw folders (raw + raw_*)
+    raw_dirs=()
+    [ -d "${dcm_root}/raw" ] && raw_dirs+=("${dcm_root}/raw")
+    for d in "${dcm_root}"/raw_*; do
+        [ -d "$d" ] && raw_dirs+=("$d")
+    done
+
+    if [ ${#raw_dirs[@]} -eq 0 ]; then
+        echo "WARNING: no raw DICOM folder for ${subj_id}, skipping"
         continue
     fi
 
-    # ── Pass 1: generate heudiconv conversion codes (dry run) ─────────────────
-    echo "Pass 1: generating conversion codes..."
-    heudiconv --files ${dicom_dir} \
-              -o ${sourcedata} \
-              -f convertall -s ${subj_id} -ss 01 -c none
+    sess_idx=0
+    for dicom_dir in "${raw_dirs[@]}"; do
+        sess_idx=$((sess_idx+1))
+        base=$(basename "${dicom_dir}")
+        # session label: raw_NN -> NN, plain raw -> 01
+        if [[ "${base}" =~ ^raw_([0-9]+)$ ]]; then
+            ss="${BASH_REMATCH[1]}"
+        else
+            ss="01"
+        fi
 
-    # ── Pass 2: convert DICOMs to NIfTI in BIDS format ────────────────────────
-    echo "Pass 2: converting to BIDS NIfTI..."
-    heudiconv --files ${dicom_dir} \
-              -o ${sourcedata} \
-              -f ${heuristic} \
-              -s ${subj_id} -ss 01 -c dcm2niix -b --overwrite
+        echo "--------------------------------------------"
+        echo " DICOMs  : ${dicom_dir}   ->  ses-${ss}"
+        echo "--------------------------------------------"
+
+        # ── Pass 1: generate heudiconv conversion codes (dry run) ─────────────
+        echo "Pass 1: generating conversion codes..."
+        heudiconv --files "${dicom_dir}" \
+                  -o "${sourcedata}" \
+                  -f convertall -s "${subj_id}" -ss "${ss}" -c none
+
+        # ── Pass 2: convert DICOMs to NIfTI in BIDS format ────────────────────
+        echo "Pass 2: converting to BIDS NIfTI..."
+        heudiconv --files "${dicom_dir}" \
+                  -o "${sourcedata}" \
+                  -f "${heuristic}" \
+                  -s "${subj_id}" -ss "${ss}" -c dcm2niix -b --overwrite
+    done
 
 done < "${SUBJ_LIST}"
 

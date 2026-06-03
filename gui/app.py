@@ -441,6 +441,87 @@ class SetupPanel(ttk.Frame):
 
 # ── Step 00 Panel ──────────────────────────────────────────────────────────────
 
+# Robust download script. Per subject it:
+#   - skips subjects already downloaded (step0_DONE.txt present)
+#   - runs findsession and collects ALL DICOM PATHs (one subject ID may map to
+#     several sessions → each goes to its own folder: raw, or raw_01/raw_02/…)
+#   - skips subjects/paths with no access (and keeps going — never aborts)
+_STEP00_TEMPLATE = r"""
+out_path='__OUT_PATH__'
+
+download_one() {
+    subj="$1"
+    subj_dir="${out_path}/${subj}"
+    log_dir="${subj_dir}/DICOM/LOG"
+    echo '============================================'
+    echo " Subject : ${subj}"
+    echo " Started : $(date)"
+    echo '============================================'
+    mkdir -p "${log_dir}"
+
+    # Skip if already downloaded
+    if [ -f "${log_dir}/step0_DONE.txt" ]; then
+        echo " [SKIP] already downloaded (step0_DONE.txt present)"
+        return 0
+    fi
+
+    fs_out=$(findsession "${subj}" 2>&1)
+    echo "${fs_out}" > "${log_dir}/findsession.txt"
+
+    # Collect every DICOM PATH (a subject ID may have multiple sessions)
+    paths=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && paths+=("$line")
+    done < <(echo "${fs_out}" | grep '^PATH' | awk '{print $NF}')
+
+    n=${#paths[@]}
+    if [ "$n" -eq 0 ]; then
+        echo " [SKIP] no DICOM path / no access for ${subj}"
+        date > "${log_dir}/step0_ERROR.txt"
+        return 0
+    fi
+
+    idx=0; ok=0
+    for src in "${paths[@]}"; do
+        idx=$((idx+1))
+        nn=$(printf '%02d' "$idx")
+        if [ "$n" -eq 1 ]; then
+            dest="${subj_dir}/DICOM/raw"
+        else
+            dest="${subj_dir}/DICOM/raw_${nn}"   # multiple sessions → one folder each
+        fi
+        if [ ! -d "$src" ] || [ ! -r "$src" ]; then
+            echo " [SKIP] no access to session ${nn}: ${src}"
+            continue
+        fi
+        echo " DICOM source [${idx}/${n}]: ${src}"
+        echo "   -> ${dest}"
+        mkdir -p "${dest}"
+        rsync -av --progress "${src}/" "${dest}/" 2>&1 | tee "${log_dir}/rsync_${nn}.log"
+        if [ "${PIPESTATUS[0]}" -eq 0 ]; then
+            ok=$((ok+1))
+        else
+            echo " [WARN] rsync failed for session ${nn}"
+        fi
+    done
+
+    if [ "$ok" -gt 0 ]; then
+        date > "${log_dir}/step0_DONE.txt"
+        echo " Done: ${subj} (${ok}/${n} session(s) copied)"
+    else
+        date > "${log_dir}/step0_ERROR.txt"
+        echo " [FAIL] no accessible sessions for ${subj}"
+    fi
+    return 0
+}
+
+for subj in __SUBJECTS__; do
+    download_one "${subj}"
+done
+echo "Step 00 finished."
+"""
+
+
 class Step00Panel(ttk.Frame):
     """Download raw DICOMs via findsession + rsync (sequential, output in console)."""
 
@@ -527,34 +608,13 @@ class Step00Panel(ttk.Frame):
             messagebox.showerror("Error", "No subjects found. Check SubjectList.txt.")
             return
 
-        # Build one bash script that processes subjects in sequence
-        lines = ["set -e"]
-        for subj in subjects:
-            dest    = f"{out_path}/{subj}/DICOM/raw"
-            log_dir = f"{out_path}/{subj}/DICOM/LOG"
-            lines += [
-                "",
-                f"echo '============================================'",
-                f"echo ' Subject : {subj}'",
-                f"echo ' Started : '$(date)",
-                f"echo '============================================'",
-                f"mkdir -p '{log_dir}'",
-                f"findsession_out=$(findsession '{subj}' 2>&1)",
-                f"echo \"$findsession_out\" | tee '{log_dir}/findsession.txt'",
-                f"dcmdir=$(echo \"$findsession_out\" | grep '^PATH' | awk '{{print $NF}}')",
-                f"if [ -z \"$dcmdir\" ] || [ ! -d \"$dcmdir\" ]; then",
-                f"  echo \"ERROR: could not resolve DICOM dir for {subj}\"",
-                f"  date | tee '{log_dir}/step0_ERROR.txt'",
-                f"  exit 1",
-                f"fi",
-                f"echo \"DICOM source: $dcmdir\"",
-                f"mkdir -p '{dest}'",
-                f"rsync -av --progress \"$dcmdir/\" '{dest}/' 2>&1 | tee '{log_dir}/rsync.log'",
-                f"date | tee '{log_dir}/step0_DONE.txt'",
-                f"echo 'Done: {subj}'",
-            ]
-
-        cmd = ["bash", "-c", "\n".join(lines)]
+        # Build a robust script: multiple sessions per ID → separate folders,
+        # skip inaccessible / already-downloaded subjects, never abort the run.
+        subj_list = " ".join(f"'{s}'" for s in subjects)
+        script = (_STEP00_TEMPLATE
+                  .replace("__OUT_PATH__", out_path)
+                  .replace("__SUBJECTS__", subj_list))
+        cmd = ["bash", "-c", script]
 
         self._last_subjects = subjects
         if self._state:
@@ -845,25 +905,32 @@ class _PassPanel(ttk.Frame):
 
         prefix = self._activate_prefix()
 
+        # Each subject may have one raw folder (.../DICOM/raw) or several from
+        # step00 (raw_01, raw_02, …). Convert each as its own BIDS session:
+        # plain "raw" → the session label below; "raw_NN" → ses-NN.
         parts = []
         for subj in subjects:
-            dicom_dir = f"{raw_path}/{subj}/DICOM/raw"
+            dcm_root = f"{raw_path}/{subj}/DICOM"
             if self._pass_num == 1:
-                cmd_str = (
-                    f"heudiconv --files '{dicom_dir}' "
-                    f"-o '{sourcedata}' "
-                    f"-f convertall -s {subj} -ss {ss} -c none"
-                )
+                hcmd = (f"heudiconv --files \"$dd\" -o '{sourcedata}' "
+                        f"-f convertall -s {subj} -ss \"$sess\" -c none")
             else:
-                cmd_str = (
-                    f"heudiconv --files '{dicom_dir}' "
-                    f"-o '{sourcedata}' "
-                    f"-f '{heuristic}' "
-                    f"-s {subj} -ss {ss} -c dcm2niix -b --minmeta --overwrite"
-                )
+                hcmd = (f"heudiconv --files \"$dd\" -o '{sourcedata}' "
+                        f"-f '{heuristic}' -s {subj} -ss \"$sess\" "
+                        f"-c dcm2niix -b --overwrite")
             parts.append(
-                f"echo '=== {subj} ===' && {cmd_str} "
-                f"&& echo '✓ Done: {subj}' || echo '✗ Failed: {subj}'"
+                f"echo '=== {subj} ==='\n"
+                f"dirs=()\n"
+                f"[ -d '{dcm_root}/raw' ] && dirs+=('{dcm_root}/raw')\n"
+                f"for d in '{dcm_root}'/raw_*; do [ -d \"$d\" ] && dirs+=(\"$d\"); done\n"
+                f"if [ ${{#dirs[@]}} -eq 0 ]; then echo '✗ no raw folder for {subj}'; else\n"
+                f"  for dd in \"${{dirs[@]}}\"; do\n"
+                f"    b=$(basename \"$dd\")\n"
+                f"    if [[ \"$b\" =~ ^raw_([0-9]+)$ ]]; then sess=\"${{BASH_REMATCH[1]}}\"; else sess='{ss}'; fi\n"
+                f"    echo \"  -> $dd  (ses-$sess)\"\n"
+                f"    {hcmd} && echo \"✓ {subj} ses-$sess\" || echo \"✗ {subj} ses-$sess\"\n"
+                f"  done\n"
+                f"fi"
             )
 
         full_script = prefix + "\n".join(parts)
