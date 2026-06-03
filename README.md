@@ -82,10 +82,21 @@ and shared by every step. fMRIPrep auto-derives from the BIDS sourcedata path.
 | **08 Second-level** | `step08a_populate_v2.sh`, `step08b_groups_v2.sh` | Part 1 populate per-task folders; Part 2 cases-vs-controls two-sample t-tests |
 | **09 Threshold p<0.05** | `step09_p_value.sh` | Threshold a group contrast (e.g. Cases>Controls) → significance map |
 | **10 ROI extraction** | `step10_ROI.sh` | Per-subject values at a peak + 5/10 mm spheres; mask con & group contrasts |
-| **Heuristic** | — | View/edit/create the HeuDiConv `heuristic.py` |
+| **Heuristic** | — | **Heuristic builder** — assign step01 sequences to BIDS targets and auto-generate `heuristic.py` |
 
 Every step panel streams its shell/MATLAB backend through a thread-safe runner, so
 the GUI never blocks. All scripts also run headless on the cluster.
+
+### Heuristic builder
+Instead of a plain text editor, the **Heuristic** tool loads the sequences detected
+by Step 01 Pass 1 for a chosen subject, lets you **assign each sequence to a BIDS
+target** (T1w / T2w / `task-*`) matched on `series_description` and/or `dim3`, and
+**auto-generates a valid `heuristic.py`**. Heuristics are saved to
+`utility/heuristic/<name>.py` with a sibling `<name>.log` listing the **added** and
+**excluded** sequences. **Templates** (shared starting points for projects with the
+same sequence pattern) live in `utility/heuristic/template/` — load one, adapt it,
+and save a project-specific heuristic. **Step 01 Pass 2** has a heuristic dropdown
+so you can pick which one to convert with.
 
 ---
 
@@ -138,7 +149,9 @@ tvns/
 ├── utility/
 │   ├── SubjectList.txt          Raw scanner IDs (temporary list)        ← input
 │   ├── SubjectListBIDS.txt      BIDS IDs (temporary, from step02)
-│   ├── heuristic.py             HeuDiConv DICOM→BIDS mapping
+│   ├── heuristic.py             HeuDiConv DICOM→BIDS mapping (default)
+│   ├── heuristic/               Built heuristics (<name>.py + <name>.log)
+│   │   └── template/            Reusable heuristic templates (e.g. tvns_default.py)
 │   ├── fmriprep_env.sh          Cluster environment (FreeSurfer/FSL/ANTs/conda)
 │   ├── extract_stim_onsets.py   STIMTRIG onset/offset extractor
 │   ├── roi_extract.py           ROI value extraction + spheres + masking

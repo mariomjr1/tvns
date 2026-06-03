@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-TVNS BIDS Pipeline GUI
+BIDS fMRI Pipeline GUI
 
-Tabs:
-  Setup      — configure all paths + edit SubjectList.txt
-  Step 00    — download raw DICOMs via findsession + rsync
-  Step 01    — heudiconv BIDS conversion (pass 1 / sequences / pass 2)
-  Heuristic  — view · edit · create heuristic.py files
+A project-driven dashboard: select (or create) a project folder, then run the
+pipeline steps (DICOM download → BIDS → fMRIPrep → physio/RETROICOR → first/
+second-level → ROI). The left panel inventories the project and tracks changes.
 """
 
 import csv
 import datetime
 import json
 import os
+import re
 import sys
 import tempfile
 import tkinter as tk
@@ -27,6 +26,7 @@ from runner import ScriptRunner
 # ── Defaults extracted from the existing shell scripts ────────────────────────
 
 _DEFAULTS = {
+    "project_root": "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme",
     "out_path":     "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/rawdata",
     "sourcedata":   "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata",
     "heuristic":    str(SCRIPTS_ROOT / "utility" / "heuristic.py"),
@@ -835,6 +835,18 @@ class _PassPanel(ttk.Frame):
         ttk.Entry(ss_row, textvariable=self._ss_var, width=8).pack(side="left", padx=6)
         ttk.Label(ss_row, text="(e.g. 01)", foreground="gray").pack(side="left")
 
+        # Heuristic selector (Pass 2 only)
+        self._heur_var = None
+        if pass_num == 2:
+            hr = ttk.Frame(self)
+            hr.grid(row=3, column=0, sticky="e", pady=(0, 8))
+            ttk.Label(hr, text="Heuristic:").pack(side="left")
+            self._heur_var = tk.StringVar(value=cfg["heuristic"].get())
+            self._heur_combo = ttk.Combobox(hr, textvariable=self._heur_var, width=34)
+            self._heur_combo.pack(side="left", padx=(4, 4))
+            ttk.Button(hr, text="↻", width=3, command=self._scan_heuristics).pack(side="left")
+            self._scan_heuristics()
+
         # Subject selection
         sel_frame = ttk.LabelFrame(self, text="Subject selection", padding=(8, 4))
         sel_frame.grid(row=4, column=0, sticky="ew", pady=(0, 8))
@@ -883,10 +895,29 @@ class _PassPanel(ttk.Frame):
             return f"source '{act}' && "
         return ""
 
+    def _scan_heuristics(self):
+        """Populate the Pass-2 heuristic dropdown from utility/heuristic/ + Setup."""
+        if self._heur_var is None:
+            return
+        heur_dir = SCRIPTS_ROOT / "utility" / "heuristic"
+        opts = []
+        if heur_dir.is_dir():
+            opts = [str(p) for p in sorted(heur_dir.glob("*.py"))]
+        default = self._cfg["heuristic"].get().strip()
+        if default and default not in opts:
+            opts.insert(0, default)
+        self._heur_combo["values"] = opts
+        if not self._heur_var.get() and opts:
+            self._heur_var.set(opts[0])
+
     def _run(self):
         raw_path   = self._cfg["out_path"].get()
         sourcedata = self._cfg["sourcedata"].get()
-        heuristic  = self._cfg["heuristic"].get()
+        # Pass 2 uses the heuristic picked in this panel; else the Setup default.
+        if self._heur_var is not None and self._heur_var.get().strip():
+            heuristic = self._heur_var.get().strip()
+        else:
+            heuristic = self._cfg["heuristic"].get()
         ss         = self._ss_var.get().strip() or "01"
         subjects   = self._subjects()
 
@@ -1835,169 +1866,381 @@ def infotodict(seqinfo):
 
 
 class HeuristicPanel(ttk.Frame):
-    """Browse, view, edit, and save heuristic.py files."""
+    """Heuristic builder: load the step01 sequences for a subject, assign each
+    sequence to a BIDS target (T1w / T2w / task-*), auto-generate heuristic.py,
+    and save it (with an added/excluded log) to utility/heuristic/."""
+
+    HEUR_DIR = SCRIPTS_ROOT / "utility" / "heuristic"
+    TMPL_DIR = SCRIPTS_ROOT / "utility" / "heuristic" / "template"
+
+    # sequence table columns (first col = assigned target)
+    _COLS = [
+        ("target",             110),
+        ("series_id",          70),
+        ("series_description", 240),
+        ("dim3",               50),
+        ("dim4",               50),
+        ("TR",                 60),
+        ("protocol_name",      170),
+    ]
+    _TARGETS = ["(exclude)", "T1w", "T2w", "task-rest",
+                "task-BlockStim", "task-ContinuousStim"]
 
     def __init__(self, parent, cfg: dict, console: Console,
                  status_var: tk.StringVar, **kwargs):
-        super().__init__(parent, padding=14, **kwargs)
-        self._cfg          = cfg
-        self._console      = console
-        self._status       = status_var
-        self._current_path = None
-        self._suppress_trace = False
+        super().__init__(parent, padding=12, **kwargs)
+        self._cfg     = cfg
+        self._console = console
+        self._status  = status_var
 
-        ttk.Label(self, text="Heuristic Editor",
-                  font=("Helvetica", 13, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(self, text="Heuristic Builder",
+                  font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
-            text=("Edit the heuristic.py that tells heudiconv how to map DICOM sequences to BIDS files.\n"
-                  "Open an existing file, create a new one from template, then click "
-                  "\"Use in Step 01\" to set it as active."),
-            wraplength=620, foreground="gray",
-        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
+            text=("Load the sequences detected by Step 01 Pass 1, assign each to a "
+                  "BIDS target, then generate + save a heuristic.py.\n"
+                  "Matching is on series_description and/or dim3. Saved to "
+                  "utility/heuristic/<name>.py (+ <name>.log)."),
+            foreground="gray", wraplength=620,
+        ).pack(anchor="w", pady=(0, 8))
 
-        # ── File toolbar ───────────────────────────────────────────────────
-        toolbar = ttk.Frame(self)
-        toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        # ── Subject row ────────────────────────────────────────────────────────
+        sr = ttk.Frame(self); sr.pack(fill="x", pady=(0, 6))
+        ttk.Label(sr, text="Subject (.heudiconv):").pack(side="left")
+        self._subj_var = tk.StringVar()
+        self._combo = ttk.Combobox(sr, textvariable=self._subj_var, width=28, state="readonly")
+        self._combo.pack(side="left", padx=(4, 6))
+        self._combo.bind("<<ComboboxSelected>>", lambda *_: self._load_sequences())
+        ttk.Button(sr, text="↻ Scan", command=self._scan).pack(side="left")
 
-        ttk.Label(toolbar, text="File:").pack(side="left")
-        self._file_var = tk.StringVar()
-        ttk.Entry(toolbar, textvariable=self._file_var, width=38).pack(
-            side="left", padx=(4, 6), fill="x", expand=True)
-        ttk.Button(toolbar, text="Open…",            command=self._open).pack(side="left", padx=2)
-        ttk.Button(toolbar, text="New from template", command=self._new_template).pack(side="left", padx=2)
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=6)
-        ttk.Button(toolbar, text="Use in Step 01",   command=self._use).pack(side="left", padx=2)
-        ttk.Button(toolbar, text="Save",             command=self._save).pack(side="left", padx=2)
-        ttk.Button(toolbar, text="Save As…",         command=self._save_as).pack(side="left", padx=2)
-
-        # ── Active heuristic indicator ─────────────────────────────────────
-        active_row = ttk.Frame(self)
-        active_row.grid(row=3, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(active_row, text="Active (in Step 01):", foreground="gray").pack(side="left")
-        self._active_lbl = ttk.Label(active_row, foreground="#4ec9b0")
-        self._active_lbl.pack(side="left", padx=6)
-        cfg["heuristic"].trace_add("write", lambda *_: self._update_active_label())
-        self._update_active_label()
-
-        # ── Text editor ────────────────────────────────────────────────────
-        editor_frame = ttk.Frame(self)
-        editor_frame.grid(row=4, column=0, sticky="nsew")
-
-        vsb = ttk.Scrollbar(editor_frame, orient="vertical")
-        hsb = ttk.Scrollbar(editor_frame, orient="horizontal")
-        self._editor = tk.Text(
-            editor_frame,
-            bg="#1e1e1e", fg="#d4d4d4",
-            font=("Menlo", 11), wrap="none",
-            insertbackground="white",
-            yscrollcommand=vsb.set, xscrollcommand=hsb.set,
-            undo=True,
-            tabs=("28", "56", "84", "112", "140"),
-        )
-        vsb.config(command=self._editor.yview)
-        hsb.config(command=self._editor.xview)
+        # ── Sequences table ────────────────────────────────────────────────────
+        tv_frame = ttk.Frame(self); tv_frame.pack(fill="both", expand=True)
+        cols = [c for c, _ in self._COLS]
+        self._tv = ttk.Treeview(tv_frame, columns=cols, show="headings",
+                                height=10, selectmode="extended")
+        for col, width in self._COLS:
+            self._tv.heading(col, text=col)
+            self._tv.column(col, width=width, minwidth=40,
+                            stretch=(col == "series_description"))
+        self._tv.tag_configure("assigned", foreground="#4ec9b0")
+        self._tv.tag_configure("excluded", foreground="#6a6a6a")
+        vsb = ttk.Scrollbar(tv_frame, orient="vertical", command=self._tv.yview)
+        self._tv.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
-        hsb.pack(side="bottom", fill="x")
+        self._tv.pack(side="left", fill="both", expand=True)
+
+        # ── Assign controls ────────────────────────────────────────────────────
+        ar = ttk.Frame(self); ar.pack(fill="x", pady=(6, 4))
+        ttk.Label(ar, text="Target:").pack(side="left")
+        self._target_var = tk.StringVar(value="T1w")
+        ttk.Combobox(ar, textvariable=self._target_var, width=20,
+                     values=self._TARGETS).pack(side="left", padx=(4, 6))
+        ttk.Button(ar, text="Assign to selected", command=self._assign).pack(side="left", padx=(0, 4))
+        ttk.Button(ar, text="Exclude selected", command=lambda: self._set_target("(exclude)")).pack(side="left", padx=(0, 4))
+        ttk.Button(ar, text="Clear", command=lambda: self._set_target("")).pack(side="left")
+
+        mr = ttk.Frame(self); mr.pack(fill="x", pady=(0, 4))
+        self._match_dim3 = tk.BooleanVar(value=True)
+        self._match_desc = tk.BooleanVar(value=True)
+        ttk.Checkbutton(mr, text="match dim3", variable=self._match_dim3).pack(side="left", padx=(0, 12))
+        ttk.Checkbutton(mr, text="match series_description", variable=self._match_desc).pack(side="left")
+
+        # ── Generate / save row ────────────────────────────────────────────────
+        # ── Templates (shared starting points for projects with the same pattern)
+        tr = ttk.Frame(self); tr.pack(fill="x", pady=(4, 2))
+        ttk.Label(tr, text="Template:").pack(side="left")
+        self._tmpl_var = tk.StringVar()
+        self._tmpl_combo = ttk.Combobox(tr, textvariable=self._tmpl_var, width=26, state="readonly")
+        self._tmpl_combo.pack(side="left", padx=(4, 4))
+        ttk.Button(tr, text="↻", width=3, command=self._scan_templates).pack(side="left", padx=(0, 4))
+        ttk.Button(tr, text="Load template", command=self._load_template).pack(side="left", padx=(0, 4))
+        ttk.Button(tr, text="Save as template…", command=self._save_template).pack(side="left")
+        self._scan_templates()
+
+        gr = ttk.Frame(self); gr.pack(fill="x", pady=(4, 4))
+        ttk.Button(gr, text="⚙ Generate", command=self._generate).pack(side="left", padx=(0, 6))
+        ttk.Label(gr, text="Name:").pack(side="left")
+        self._name_var = tk.StringVar(value="heuristic_new")
+        ttk.Entry(gr, textvariable=self._name_var, width=22).pack(side="left", padx=(4, 6))
+        ttk.Button(gr, text="💾 Save", command=self._save).pack(side="left", padx=(0, 4))
+        ttk.Button(gr, text="Open…", command=self._open).pack(side="left", padx=(0, 4))
+        ttk.Button(gr, text="Use in Pass 2", command=self._use).pack(side="left")
+
+        ttk.Label(gr, text="active:", foreground="gray").pack(side="left", padx=(10, 2))
+        self._active_lbl = ttk.Label(gr, foreground="#4ec9b0")
+        self._active_lbl.pack(side="left")
+        cfg["heuristic"].trace_add("write", lambda *_: self._update_active())
+        self._update_active()
+
+        # ── Editor ─────────────────────────────────────────────────────────────
+        ed = ttk.Frame(self); ed.pack(fill="both", expand=True, pady=(4, 0))
+        self._editor = tk.Text(ed, bg="#1e1e1e", fg="#d4d4d4", font=("Menlo", 11),
+                               wrap="none", insertbackground="white", undo=True, height=12)
+        evsb = ttk.Scrollbar(ed, orient="vertical", command=self._editor.yview)
+        ehsb = ttk.Scrollbar(ed, orient="horizontal", command=self._editor.xview)
+        self._editor.configure(yscrollcommand=evsb.set, xscrollcommand=ehsb.set)
+        evsb.pack(side="right", fill="y")
+        ehsb.pack(side="bottom", fill="x")
         self._editor.pack(side="left", fill="both", expand=True)
 
-        # Bind Ctrl+S / Cmd+S to save
-        self._editor.bind("<Command-s>", lambda _: self._save())
-        self._editor.bind("<Control-s>", lambda _: self._save())
+        self._scan()
 
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(4, weight=1)
+    # ── data ──────────────────────────────────────────────────────────────────
+    def _tsv_path(self, subj):
+        sd = self._cfg["sourcedata"].get().strip()
+        info = Path(sd) / ".heudiconv" / subj / "info"
+        hits = sorted(info.glob("dicominfo*.tsv")) if info.is_dir() else []
+        if not hits:
+            return None
+        ses = [h for h in hits if "ses-01" in h.name]
+        return ses[0] if ses else hits[0]
 
-        # Auto-load the heuristic set in cfg
-        self._load_from_cfg()
-        cfg["heuristic"].trace_add("write", self._on_cfg_heuristic)
+    def _scan(self):
+        sd = self._cfg["sourcedata"].get().strip()
+        hh = Path(sd) / ".heudiconv" if sd else None
+        subs = []
+        if hh and hh.is_dir():
+            subs = sorted(p.name for p in hh.iterdir()
+                          if p.is_dir() and self._tsv_path(p.name))
+        self._combo["values"] = subs
+        if subs and not self._subj_var.get():
+            self._subj_var.set(subs[0])
+            self._load_sequences()
 
-    def _update_active_label(self):
-        p = self._cfg["heuristic"].get().strip()
-        self._active_lbl.config(text=Path(p).name if p else "(none)")
-
-    def _on_cfg_heuristic(self, *_):
-        if self._suppress_trace:
+    def _load_sequences(self):
+        subj = self._subj_var.get().strip()
+        if not subj:
             return
-        p = self._cfg["heuristic"].get().strip()
-        if p and os.path.isfile(p) and p != self._current_path:
-            self._load_file(p)
+        tsv = self._tsv_path(subj)
+        if not tsv or not tsv.is_file():
+            messagebox.showwarning("Not found",
+                f"dicominfo*.tsv not found for {subj}.\nRun Step 01 Pass 1 first.")
+            return
+        self._tv.delete(*self._tv.get_children())
+        with open(tsv, newline="") as f:
+            for row in csv.DictReader(f, delimiter="\t"):
+                self._tv.insert("", "end", values=(
+                    "",                                     # target (unassigned)
+                    row.get("series_id", ""),
+                    row.get("series_description", ""),
+                    row.get("dim3", ""),
+                    row.get("dim4", ""),
+                    row.get("TR", ""),
+                    row.get("protocol_name", ""),
+                ), tags=("excluded",))
+        # pre-fill the name from the subject
+        self._name_var.set(f"heuristic_{subj}")
+        self._console.append(f"[Heuristic] Loaded {len(self._tv.get_children())} "
+                             f"sequence(s) for {subj}", "info")
 
-    def _load_from_cfg(self):
-        p = self._cfg["heuristic"].get().strip()
-        if p and os.path.isfile(p):
-            self._load_file(p)
+    # ── assignment ────────────────────────────────────────────────────────────
+    def _assign(self):
+        self._set_target(self._target_var.get().strip())
 
-    def _load_file(self, path):
-        with open(path) as f:
-            content = f.read()
+    def _set_target(self, target):
+        sel = self._tv.selection()
+        if not sel:
+            messagebox.showwarning("No selection", "Select sequence row(s) first.")
+            return
+        for iid in sel:
+            vals = list(self._tv.item(iid, "values"))
+            vals[0] = target
+            tag = "assigned" if (target and target != "(exclude)") else "excluded"
+            self._tv.item(iid, values=vals, tags=(tag,))
+
+    # ── code generation ────────────────────────────────────────────────────────
+    def _rows(self):
+        out = []
+        for iid in self._tv.get_children():
+            v = self._tv.item(iid, "values")
+            out.append({"target": v[0].strip(), "series_id": v[1],
+                        "desc": v[2], "dim3": v[3]})
+        return out
+
+    @staticmethod
+    def _target_key(target):
+        """Return (var_name, template) for a BIDS target."""
+        if target == "T1w":
+            return "t1w", "sub-{subject}/{session}/anat/sub-{subject}_{session}_T1w"
+        if target == "T2w":
+            return "t2w", "sub-{subject}/{session}/anat/sub-{subject}_{session}_T2w"
+        if target.startswith("task-"):
+            task = target[len("task-"):]
+            var = "func_" + re.sub(r"[^A-Za-z0-9]", "_", task).lower()
+            tmpl = ("sub-{subject}/{session}/func/sub-{subject}_{session}_"
+                    + target + "_run-{item:02d}_bold")
+            return var, tmpl
+        # generic fallback (anat-like)
+        var = re.sub(r"[^A-Za-z0-9]", "_", target).lower() or "misc"
+        return var, "sub-{subject}/{session}/anat/sub-{subject}_{session}_" + target
+
+    def _build_code(self):
+        rows = self._rows()
+        assigned = [r for r in rows if r["target"] and r["target"] != "(exclude)"]
+        if not assigned:
+            return None
+        m_dim3 = self._match_dim3.get()
+        m_desc = self._match_desc.get()
+
+        # unique targets in order of first appearance
+        targets, seen = [], set()
+        for r in assigned:
+            if r["target"] not in seen:
+                seen.add(r["target"]); targets.append(r["target"])
+
+        keymap = {t: self._target_key(t) for t in targets}
+
+        L = ["import os", "", "",
+             "def create_key(template, outtype=('nii.gz',), annotation_classes=None):",
+             "    if template is None or not template:",
+             "        raise ValueError('Template must be a valid format string')",
+             "    return template, outtype, annotation_classes", "", "",
+             "def infotodict(seqinfo):",
+             '    """Auto-generated by the BIDS fMRI Pipeline Heuristic Builder."""', ""]
+        # Section 1: keys
+        for t in targets:
+            var, tmpl = keymap[t]
+            L.append(f"    {var} = create_key('{tmpl}')")
+        L.append("")
+        L.append("    info = {" + ", ".join(f"{keymap[t][0]}: []" for t in targets) + "}")
+        L.append("")
+        # Section 2: matching
+        L.append("    for s in seqinfo:")
+        for r in assigned:
+            var = keymap[r["target"]][0]
+            conds = []
+            if m_dim3 and str(r["dim3"]).strip():
+                conds.append(f"(s.dim3 == {int(float(r['dim3']))})")
+            if m_desc and str(r["desc"]).strip():
+                conds.append(f"({r['desc']!r} in s.series_description)")
+            cond = " and ".join(conds) if conds else "True"
+            L.append(f"        if {cond}:")
+            L.append(f"            info[{var}].append(s.series_id)")
+        L.append("")
+        L.append("    return info")
+        L.append("")
+        return "\n".join(L)
+
+    def _generate(self):
+        code = self._build_code()
+        if code is None:
+            messagebox.showwarning("Nothing assigned",
+                "Assign at least one sequence to a BIDS target first.")
+            return
         self._editor.delete("1.0", "end")
-        self._editor.insert("1.0", content)
-        self._current_path = path
-        self._file_var.set(path)
-        self._console.append(f"[Heuristic] Loaded: {path}", "info")
+        self._editor.insert("1.0", code)
+        self._console.append("[Heuristic] Generated from assignments.", "ok")
+
+    # ── save / open / use ──────────────────────────────────────────────────────
+    def _save(self):
+        code = self._editor.get("1.0", "end-1c").strip()
+        if not code:
+            self._generate()
+            code = self._editor.get("1.0", "end-1c").strip()
+            if not code:
+                return
+        self.HEUR_DIR.mkdir(parents=True, exist_ok=True)
+        name = self._name_var.get().strip() or "heuristic_new"
+        if not name.endswith(".py"):
+            name += ".py"
+        path = self.HEUR_DIR / name
+        with open(path, "w") as f:
+            f.write(code if code.endswith("\n") else code + "\n")
+        self._write_log(path.with_suffix(".log"))
+        self._console.append(f"[Heuristic] Saved: {path}", "ok")
+        self._status.set(f"Heuristic saved → {path.name}")
+        messagebox.showinfo("Saved", f"Saved heuristic:\n{path}\n\nLog:\n{path.with_suffix('.log')}")
+
+    def _write_log(self, log_path):
+        rows = self._rows()
+        added = [r for r in rows if r["target"] and r["target"] != "(exclude)"]
+        excl  = [r for r in rows if not r["target"] or r["target"] == "(exclude)"]
+        ts = datetime.datetime.now().isoformat(timespec="seconds")
+        with open(log_path, "w") as f:
+            f.write(f"Heuristic log\nBuilt from subject: {self._subj_var.get()}\nSaved: {ts}\n\n")
+            f.write(f"ADDED ({len(added)} sequence(s) mapped to a BIDS target):\n")
+            for r in added:
+                f.write(f"  {r['target']:18s} <- dim3={r['dim3']:>4}  "
+                        f"{r['desc']!r}  (series_id {r['series_id']})\n")
+            f.write(f"\nEXCLUDED ({len(excl)} sequence(s) not mapped):\n")
+            for r in excl:
+                f.write(f"  dim3={r['dim3']:>4}  {r['desc']!r}  (series_id {r['series_id']})\n")
 
     def _open(self):
         p = filedialog.askopenfilename(
-            title="Open heuristic file",
-            initialdir=str(SCRIPTS_ROOT / "utility"),
-            filetypes=[("Python", "*.py"), ("All", "*.*")],
-        )
+            title="Open heuristic", initialdir=str(self.HEUR_DIR),
+            filetypes=[("Python", "*.py"), ("All", "*.*")])
         if p:
-            self._load_file(p)
+            with open(p) as f:
+                self._editor.delete("1.0", "end")
+                self._editor.insert("1.0", f.read())
+            self._name_var.set(Path(p).name)
+            self._console.append(f"[Heuristic] Opened: {p}", "info")
 
-    def _new_template(self):
-        p = filedialog.asksaveasfilename(
-            title="Save new heuristic",
-            initialdir=str(SCRIPTS_ROOT / "utility"),
-            defaultextension=".py",
-            filetypes=[("Python", "*.py")],
-            initialfile="heuristic_new.py",
-        )
-        if not p:
+    # ── templates ──────────────────────────────────────────────────────────────
+    def _scan_templates(self):
+        names = []
+        if self.TMPL_DIR.is_dir():
+            names = sorted(p.name for p in self.TMPL_DIR.glob("*.py"))
+        self._tmpl_combo["values"] = names
+        if names and not self._tmpl_var.get():
+            self._tmpl_var.set(names[0])
+
+    def _load_template(self):
+        name = self._tmpl_var.get().strip()
+        if not name:
+            messagebox.showwarning("No template", "No template selected.")
             return
-        with open(p, "w") as f:
-            f.write(_HEURISTIC_TEMPLATE)
-        self._load_file(p)
-        self._console.append(f"[Heuristic] Created from template: {p}", "ok")
+        path = self.TMPL_DIR / name
+        if not path.is_file():
+            messagebox.showerror("Not found", f"Template not found:\n{path}")
+            return
+        with open(path) as f:
+            self._editor.delete("1.0", "end")
+            self._editor.insert("1.0", f.read())
+        # suggest a project-specific name to save under utility/heuristic/
+        subj = self._subj_var.get().strip()
+        self._name_var.set(f"heuristic_{subj}" if subj else Path(name).stem)
+        self._console.append(f"[Heuristic] Loaded template: {path}", "info")
+
+    def _save_template(self):
+        code = self._editor.get("1.0", "end-1c").strip()
+        if not code:
+            messagebox.showwarning("Empty", "Generate or load a heuristic first.")
+            return
+        self.TMPL_DIR.mkdir(parents=True, exist_ok=True)
+        path = filedialog.asksaveasfilename(
+            title="Save as template", initialdir=str(self.TMPL_DIR),
+            defaultextension=".py", initialfile="template_new.py",
+            filetypes=[("Python", "*.py")])
+        if not path:
+            return
+        with open(path, "w") as f:
+            f.write(code if code.endswith("\n") else code + "\n")
+        self._scan_templates()
+        self._tmpl_var.set(Path(path).name)
+        self._console.append(f"[Heuristic] Saved template: {path}", "ok")
+        self._status.set(f"Template saved → {Path(path).name}")
 
     def _use(self):
-        p = self._current_path or self._file_var.get().strip()
-        if not p:
-            messagebox.showwarning("No file", "Open a heuristic file first.")
-            return
-        self._suppress_trace = True
-        self._cfg["heuristic"].set(p)
-        self._suppress_trace = False
-        self._status.set(f"Heuristic set → {Path(p).name}")
-        self._console.append(f"[Heuristic] Set as active: {p}", "ok")
+        name = self._name_var.get().strip()
+        if not name.endswith(".py"):
+            name += ".py"
+        path = self.HEUR_DIR / name
+        if not path.is_file():
+            if messagebox.askyesno("Save first?",
+                    f"{path.name} is not saved yet. Save it now and use it?"):
+                self._save()
+            else:
+                return
+        self._cfg["heuristic"].set(str(path))
+        self._status.set(f"Active heuristic → {path.name}")
+        self._console.append(f"[Heuristic] Active for Pass 2: {path}", "ok")
 
-    def _save(self):
-        p = self._current_path or self._file_var.get().strip()
-        if not p:
-            self._save_as()
-            return
-        content = self._editor.get("1.0", "end-1c")
-        with open(p, "w") as f:
-            f.write(content)
-        self._console.append(f"[Heuristic] Saved: {p}", "ok")
-        self._status.set(f"Saved {Path(p).name}")
+    def _update_active(self):
+        p = self._cfg["heuristic"].get().strip()
+        self._active_lbl.config(text=Path(p).name if p else "(none)")
 
-    def _save_as(self):
-        p = filedialog.asksaveasfilename(
-            title="Save heuristic as",
-            initialdir=str(SCRIPTS_ROOT / "utility"),
-            defaultextension=".py",
-            filetypes=[("Python", "*.py")],
-        )
-        if not p:
-            return
-        self._current_path = p
-        self._file_var.set(p)
-        self._save()
-
-
-# ── Physio (step03_physioparse_v2) ────────────────────────────────────────────
 
 class _PhysioSetupTab(ttk.Frame):
     """Paths, subject, and .mat format selector shared by all physio pipeline steps."""
@@ -4588,6 +4831,7 @@ class SidebarPanel(ttk.Frame):
         super().__init__(parent, **kwargs)
         self._inv     = ProjectInventory(cfg)
         self._console = console
+        self._cfg     = cfg
 
         header = ttk.Frame(self)
         header.pack(fill="x", padx=6, pady=(6, 2))
@@ -4595,9 +4839,30 @@ class SidebarPanel(ttk.Frame):
                   font=("Helvetica", 11, "bold")).pack(side="left")
         ttk.Button(header, text="✓ Check", command=self.check).pack(side="right")
 
+        # Project folder — manually selected; sets rawdata + sourcedata under it.
+        proj_row = ttk.Frame(self)
+        proj_row.pack(fill="x", padx=6, pady=(2, 0))
+        ttk.Label(proj_row, text="Folder:", width=7, anchor="w").pack(side="left")
+        ttk.Entry(proj_row, textvariable=cfg["project_root"]).pack(
+            side="left", fill="x", expand=True, padx=(0, 4))
+        ttk.Button(proj_row, text="…", width=3, command=self._browse_project).pack(side="left")
+
+        # New project creator
+        new_row = ttk.Frame(self)
+        new_row.pack(fill="x", padx=6, pady=(2, 2))
+        ttk.Label(new_row, text="New:", width=7, anchor="w").pack(side="left")
+        self._newname_var = tk.StringVar()
+        ent = ttk.Entry(new_row, textvariable=self._newname_var)
+        ent.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ent.bind("<Return>", lambda _: self._create_project())
+        ttk.Button(new_row, text="+ Create", command=self._create_project).pack(side="left")
+
         self._root_lbl = ttk.Label(self, foreground="#9cdcfe", font=("Menlo", 9),
                                    wraplength=300)
         self._root_lbl.pack(anchor="w", padx=6)
+
+        # When the project folder changes, point rawdata/sourcedata under it.
+        cfg["project_root"].trace_add("write", self._on_project_change)
 
         tv_frame = ttk.Frame(self)
         tv_frame.pack(fill="both", expand=True, padx=(6, 0), pady=(4, 4))
@@ -4658,6 +4923,60 @@ class SidebarPanel(ttk.Frame):
         if sd and os.path.isdir(sd):
             self.check()
 
+    # ── project folder selection / creation ──────────────────────────────────
+    def _browse_project(self):
+        d = filedialog.askdirectory(title="Select project folder")
+        if d:
+            self._cfg["project_root"].set(d)
+
+    def _on_project_change(self, *_):
+        """Point rawdata + sourcedata under the selected project folder.
+        Changing sourcedata cascades (fMRIPrep auto-derive + auto-check)."""
+        pr = self._cfg["project_root"].get().strip()
+        if not pr:
+            return
+        self._cfg["out_path"].set(str(Path(pr) / "rawdata"))
+        self._cfg["sourcedata"].set(str(Path(pr) / "sourcedata"))
+
+    def _create_project(self):
+        parent = self._cfg["project_root"].get().strip()
+        name   = self._newname_var.get().strip()
+        if not parent:
+            messagebox.showerror("Error", "Select a project folder (parent location) first.")
+            return
+        if not name:
+            messagebox.showerror("Error", "Enter a name for the new project.")
+            return
+        proj = Path(parent) / name
+        if proj.exists():
+            if not messagebox.askyesno(
+                    "Exists", f"{proj} already exists. Create missing subfolders inside it?"):
+                return
+        # Project skeleton
+        subdirs = [
+            "codes",
+            "rawdata",
+            "sourcedata",
+            "sourcedata/derivatives",
+            "sourcedata/derivatives/fmriprep",
+            "sourcedata/derivatives/freesurfer",
+        ]
+        try:
+            for s in subdirs:
+                (proj / s).mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror("Create failed", str(e))
+            return
+        self._newname_var.set("")
+        # Switch to the new project (triggers path derivation + check)
+        self._cfg["project_root"].set(str(proj))
+        if self._console:
+            self._console.append(f"[Project] Created new project: {proj}", "ok")
+            for s in subdirs:
+                self._console.append(f"  + {s}", "dim")
+        messagebox.showinfo("Project created",
+                            f"Created:\n{proj}\n\n" + "\n".join(subdirs))
+
     # ── rendering ─────────────────────────────────────────────────────────────
     def _render(self, inv: dict):
         self._tv.delete(*self._tv.get_children())
@@ -4695,7 +5014,7 @@ class SidebarPanel(ttk.Frame):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("TVNS BIDS Pipeline")
+        self.title("BIDS fMRI Pipeline")
         self.geometry("1120x900")
         self.minsize(860, 680)
         self._build()
@@ -4704,7 +5023,7 @@ class App(tk.Tk):
         # ── Header ────────────────────────────────────────────────────────────
         header = ttk.Frame(self, padding=(10, 8, 10, 0))
         header.pack(fill="x")
-        ttk.Label(header, text="TVNS BIDS Pipeline",
+        ttk.Label(header, text="BIDS fMRI Pipeline",
                   font=("Helvetica", 16, "bold")).pack(side="left")
         # Save / Load project configuration (all path fields across every panel)
         ttk.Button(header, text="💾 Save config", command=self._save_config).pack(side="left", padx=(16, 2))
@@ -4816,7 +5135,7 @@ class App(tk.Tk):
         self._console    = console
         self._status_var = status_var
 
-        console.append("TVNS BIDS Pipeline GUI ready.", "ok")
+        console.append("BIDS fMRI Pipeline GUI ready.", "ok")
         console.append(f"Scripts root: {SCRIPTS_ROOT}", "dim")
         console.append(f"Pipeline state: {SCRIPTS_ROOT / 'pipeline_state.json'}", "dim")
 
