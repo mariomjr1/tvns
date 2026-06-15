@@ -12,3 +12,7 @@ heuristic_warnings.log
 
 # Archives / scratch
 *.zip
+
+# Agent tasks and Claude config
+agents/
+.claude/

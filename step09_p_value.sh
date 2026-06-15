@@ -27,6 +27,8 @@
 #   contrast_idx     spmT index     default: 1   (Cases>Controls)
 #   tail             pos|neg|two    default: pos
 #   env_script       env to source  default: <script_dir>/utility/fmriprep_env.sh
+#   correction       none|FWE|FDR   default: none  (optional multiple-comparison
+#                    correction; 'none' = uncorrected, fine for a pilot study)
 # ============================================================================
 
 set -euo pipefail
@@ -50,12 +52,15 @@ EXTENT="${7:-0}"
 CIDX="${8:-1}"
 TAIL="${9:-pos}"
 ENV_SCRIPT="${10:-${SCRIPT_DIR}/utility/fmriprep_env.sh}"
+CORRECTION="${11:-none}"   # none | FWE | FDR  (optional)
+BRAINSTEM_MASK="${12:-}"   # optional explicit brainstem mask (Task 05 C3)
 
 echo "============================================"
 echo " STEP 09 — Threshold group map (p<${P})"
 echo " Analysis dir: ${ANALYSIS_DIR}"
 echo " Output:       ${OUTPUT_DIR}"
-echo " Contrast idx: ${CIDX}  Tail: ${TAIL}  Extent: ${EXTENT}"
+echo " Contrast idx: ${CIDX}  Tail: ${TAIL}  Extent: ${EXTENT}  Correction: ${CORRECTION}"
+echo " Brainstem mask: ${BRAINSTEM_MASK:-(none)}"
 echo " Date:         $(date)"
 echo "============================================"
 echo ""
@@ -79,7 +84,8 @@ mkdir -p "${OUTPUT_DIR}"
 
 matlab_cmd="addpath('${MATLAB_CODE_DIR}'); \
 threshold_group_map('${ANALYSIS_DIR}', '${OUTPUT_DIR}', '${SPM_DIR}', \
-    'P', ${P}, 'Extent', ${EXTENT}, 'ContrastIndex', ${CIDX}, 'Tail', '${TAIL}');"
+    'P', ${P}, 'Extent', ${EXTENT}, 'ContrastIndex', ${CIDX}, 'Tail', '${TAIL}', \
+    'Correction', '${CORRECTION}', 'BrainstemMask', '${BRAINSTEM_MASK}');"
 
 echo "Running MATLAB threshold..."
 "${MATLAB_EXE}" -nodisplay -nosplash -batch "${matlab_cmd}"

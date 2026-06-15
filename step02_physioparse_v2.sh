@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ============================================================================
-# step03_physioparse_v2.sh
+# step02_physioparse_v2.sh   (NEW ORDER: runs before fMRIPrep)
 # Created by Mario Murakami
 #
 # Runs the physioparse pipeline for a single tVNS subject:
@@ -23,7 +23,7 @@
 #             Output: qc/physio_qc_plot.png, qc/physio_qc_metrics.csv
 #
 # Usage:
-#   bash step03_physioparse_v2.sh <mat_file> <bids_subject_id> \
+#   bash step02_physioparse_v2.sh <mat_file> <bids_subject_id> \
 #        [sourcedata_dir] [physioparse_dir] [python_exe]
 #
 # Arguments:
@@ -273,10 +273,9 @@ echo "   qc/physio_qc_metrics.csv   — SNR / rate / trigger QC"
 echo ""
 echo " Next steps:"
 echo "   1. Review pseudotime_plot.png to verify sequence alignment"
-echo "   2. Use R-DECO on RPIEZO channel in each parsed .mat to detect R-peaks"
-echo "   3. Run utility/matlab_code/preproc_generate_1D.m on parsed/ to produce .1D files"
-echo "   4. Run step10 (correct_names) to rename .1D files to BIDS format"
-echo "   5. Run step12 (retroicor_batch) on the 4_names_corrected/ folder"
+echo "   2. Run step03_preprocess_for_retroicor_v2.sh (filter + R-DECO cardiac annotation)"
+echo "   3. Run step04_retroicor_v2.sh (native-space physio correction)"
+echo "   4. Run step05_fmriprep_v2.sh (fMRIPrep on the corrected BOLD)"
 echo ""
 echo " Done.  $(date)"
 echo "============================================"

@@ -70,6 +70,12 @@ DO_MNI="${12:-1}"
 ENV_SCRIPT="${13:-${SCRIPT_DIR}/utility/fmriprep_env.sh}"
 WARP_ONLY="${14:-0}"
 USE_SOURCEDATA="${15:-0}"
+# Space to model the first level in (Task 06): T1w | MNI | both
+SPACE="${16:-T1w}"
+# Brainstem restriction (Task 05 C2): optional explicit mask = brainstem ∩ brain
+RESTRICT_BS="${17:-0}"            # 1 = restrict GLM to the brainstem mask
+BRAINSTEM_MASK="${18:-}"         # brainstem_mask.nii (must match the modeling space)
+BRAINSTEM_SMOOTH="${19:-}"       # optional smaller FWHM (mm) for brainstem runs
 
 FMRIPREP_DIR="${SOURCEDATA}/derivatives/fmriprep"
 
@@ -87,6 +93,9 @@ fi
 echo " SPM:           ${SPM_DIR}"
 echo " Env script:    ${ENV_SCRIPT}"
 echo " TR=${TR}  Smooth=${SMOOTH}mm  Session=ses-${SESSION}  DoMNI=${DO_MNI}  WarpOnly=${WARP_ONLY}  UseSourcedata=${USE_SOURCEDATA}"
+echo " GLM nuisance: motion + FD spikes only (physio removed pre-fMRIPrep by RETROICOR)"
+echo " First-level space: ${SPACE}  (T1w warp to MNI: DoMNI=${DO_MNI})"
+echo " Restrict to brainstem: ${RESTRICT_BS}  mask: ${BRAINSTEM_MASK:-(none)}  bs-smooth: ${BRAINSTEM_SMOOTH:-(default)}"
 echo " Date:          $(date)"
 echo "============================================"
 echo ""
@@ -128,6 +137,12 @@ mkdir -p "${OUTPUT_DIR}"
 # Convert do_mni (1/0) to MATLAB true/false
 if [ "${DO_MNI}" = "1" ]; then DOMNI_ML="true"; else DOMNI_ML="false"; fi
 if [ "${WARP_ONLY}" = "1" ]; then WARPONLY_ML="true"; else WARPONLY_ML="false"; fi
+if [ "${RESTRICT_BS}" = "1" ]; then RESTBS_ML="true"; else RESTBS_ML="false"; fi
+# Optional brainstem smoothing name-value (only when a value is given)
+BS_SMOOTH_ARG=""
+if [ -n "${BRAINSTEM_SMOOTH}" ]; then
+    BS_SMOOTH_ARG="'BrainstemSmoothFWHM', [${BRAINSTEM_SMOOTH} ${BRAINSTEM_SMOOTH} ${BRAINSTEM_SMOOTH}], "
+fi
 
 # Determine SourceData path if USE_SOURCEDATA is enabled
 SOURCEDATA_ARG=""
@@ -151,6 +166,9 @@ glm_spm_firstlevel_mni_v2( \
     'DoMNI', ${DOMNI_ML}, \
     'WarpOnly', ${WARPONLY_ML}, \
     ${SOURCEDATA_ARG} \
+    'Space', '${SPACE}', \
+    'RestrictBrainstem', ${RESTBS_ML}, 'BrainstemMask', '${BRAINSTEM_MASK}', \
+    ${BS_SMOOTH_ARG} \
     'SmoothPrefix', 's3' );"
 
 echo "Running MATLAB first-level + MNI..."

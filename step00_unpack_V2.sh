@@ -99,7 +99,9 @@ for src in "${paths[@]}"; do
     if [ "${PIPESTATUS[0]}" -eq 0 ]; then
         ok=$((ok+1))
     else
-        echo " [WARN] rsync failed for session ${nn}"
+        echo "ERROR: rsync failed for session ${nn}: ${src} -> ${dest}"
+        printf "RSYNC FAILED\ntime: %s\nsrc:  %s\ndest: %s\n\n" \
+            "$(date)" "${src}" "${dest}" >> "${log_dir}/step0_rsync_failed.log"
     fi
 done
 

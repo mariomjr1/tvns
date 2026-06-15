@@ -1,7 +1,10 @@
 # Pseudotime Pipeline
 
 A physiological data processing pipeline for MRI research sessions.
-Aligns a continuous LabChart recording (RESP, RPIEZO, STIMTRIG, MRTRIG) to individual MRI sequences using MR-trigger–anchored pseudotime.
+Aligns a continuous LabChart recording (RESP, RPIEZO, STIMTRIG, MRTRIG) to
+individual MRI sequences using hybrid MR-trigger-anchored scanner-clock pseudotime.
+Some sequences do not emit MRTRIG; they are located from `AcquisitionTime` offsets
+after the clocks have been synchronized with a known trigger-bearing sequence.
 
 ---
 
@@ -11,7 +14,7 @@ Each step has two variants — one per LabChart export format. Select the correc
 
 | Step | Classic script | Block1 script | What it does |
 |------|---------------|---------------|-------------|
-| 1 | `step01_times_acquisition.sh` | `step01b_times_acquisition_block1.sh` | Detects MR triggers, computes pseudotime for each sequence, saves `pseudotime_mapping.json` |
+| 1 | `step01_times_acquisition.sh` | `step01b_times_acquisition_block1.sh` | Uses a trigger-bearing anchor to synchronize clocks, then computes pseudotime for trigger-bearing and triggerless sequences |
 | 2 | `step02_plot_pseudotime_quality.py` | `step02b_plot_pseudotime_quality_block1.py` | Visualises all 4 channels with colour-coded acquisition bars |
 | 3 | `step03_parse.py` | `step03b_parse_block1.py` | Cuts the recording into per-sequence `.mat` files and plots |
 | 4 | `step04_qc.py` | _(same script, handles both formats)_ | QC report: signal SNR, breathing rate/regularity, cardiac rate, trigger regularity, sequence coverage |

@@ -30,6 +30,8 @@
 #   group_con     group-comparison contrast to mask (e.g. spmT_0001.nii)
 #   group_mask    mask to apply to group_con (e.g. a 10 mm sphere mask).
 #                 Both group_con and group_mask are manually selected.
+#   sig_mask      optional significance mask (e.g. a step09 corrected *_mask.nii):
+#                 adds a per-subject sphere mean restricted to significant voxels.
 # ============================================================================
 
 set -euo pipefail
@@ -50,6 +52,11 @@ COORD_MODE="${9:-mm}"
 PYTHON="${10:-python3}"
 GROUP_CON="${11:-}"
 GROUP_MASK="${12:-}"
+SIG_MASK="${13:-}"     # optional step09 corrected mask
+ROI_MASK="${14:-}"     # optional whole-mask ROI (e.g. brainstem) — coordinate-free mean
+ROI_ATLAS="${15:-}"    # optional labeled atlas → per-nucleus means
+ROI_LABELS="${16:-}"   # space/comma list of atlas label values (with --roi-atlas)
+ROI_LABEL_NAMES="${17:-}"  # optional space/comma names for the labels (same order)
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 EXTRACTOR="${SCRIPT_DIR}/utility/roi_extract.py"
@@ -79,6 +86,11 @@ fi
 mkdir -p "${OUTPUT_DIR}"
 
 # Build optional args
+# --coord only when X/Y/Z are all provided (ROI-mask/atlas runs can be coordinate-free)
+coord_arg=""
+if [ -n "${X}" ] && [ -n "${Y}" ] && [ -n "${Z}" ]; then
+    coord_arg="--coord ${X} ${Y} ${Z}"
+fi
 voxel_flag=""
 [ "${COORD_MODE}" = "voxel" ] && voxel_flag="--voxel"
 con_arg=""
@@ -87,13 +99,24 @@ gcon_arg=""
 [ -n "${GROUP_CON}" ]  && gcon_arg="--group-con ${GROUP_CON}"
 gmask_arg=""
 [ -n "${GROUP_MASK}" ] && gmask_arg="--group-mask ${GROUP_MASK}"
+sigmask_arg=""
+[ -n "${SIG_MASK}" ] && sigmask_arg="--sig-mask ${SIG_MASK}"
+roimask_arg=""
+[ -n "${ROI_MASK}" ] && roimask_arg="--roi-mask ${ROI_MASK}"
+roiatlas_arg=""
+[ -n "${ROI_ATLAS}" ] && roiatlas_arg="--roi-atlas ${ROI_ATLAS}"
+roilabels_arg=""
+[ -n "${ROI_LABELS}" ] && roilabels_arg="--roi-labels ${ROI_LABELS//,/ }"
+roinames_arg=""
+[ -n "${ROI_LABEL_NAMES}" ] && roinames_arg="--roi-label-names ${ROI_LABEL_NAMES//,/ }"
 
 "${PYTHON}" "${EXTRACTOR}" \
-    --coord "${X}" "${Y}" "${Z}" \
+    ${coord_arg} \
     --wcon-dir "${WCON_DIR}" \
     --output-dir "${OUTPUT_DIR}" \
     --radii "${R_SMALL}" "${R_LARGE}" \
-    ${voxel_flag} ${con_arg} ${gcon_arg} ${gmask_arg}
+    ${voxel_flag} ${con_arg} ${gcon_arg} ${gmask_arg} ${sigmask_arg} \
+    ${roimask_arg} ${roiatlas_arg} ${roilabels_arg} ${roinames_arg}
 rc=$?
 
 echo ""

@@ -28,6 +28,17 @@
 #   do_combined      1 or 0            default: 1
 #   env_script       env to source     default: <script_dir>/utility/fmriprep_env.sh
 #                                       ("none" to skip)
+#   combined_mode    average | pool    default: average
+#                    'average' = average each subject's Block+Continuous into ONE image
+#                                before the two-sample test (one obs/subject — correct).
+#                    'pool'    = legacy: enter both conditions per subject (double-counts).
+#   covariates       comma list | none default: none  (OPTIONAL nuisance covariates;
+#                    e.g. "age,sex,mean_fd" — built from participants.tsv + fMRIPrep
+#                    confounds by utility/build_group_covariates.py)
+#   participants_tsv BIDS participants.tsv (age/sex)   default: <sourcedata>/participants.tsv
+#   fmriprep_dir     fMRIPrep derivatives (mean_fd)    default: <sourcedata>/derivatives/fmriprep
+#   sourcedata       BIDS root (to auto-derive the two above)  default: (none)
+#   session          BIDS session for mean_fd          default: 01
 # ============================================================================
 
 set -euo pipefail
@@ -50,6 +61,13 @@ MATLAB_EXE="${6:-matlab}"
 MATLAB_CODE_DIR="${7:-${SCRIPT_DIR}/utility/matlab_code}"
 DO_COMBINED="${8:-1}"
 ENV_SCRIPT="${9:-${SCRIPT_DIR}/utility/fmriprep_env.sh}"
+COMBINED_MODE="${10:-average}"   # average (default) | pool (legacy)
+COVARIATES="${11:-none}"         # e.g. "age,sex,mean_fd" or "none"
+SOURCEDATA="${14:-}"             # optional BIDS root to auto-derive the two below
+PARTICIPANTS_TSV="${12:-${SOURCEDATA:+${SOURCEDATA}/participants.tsv}}"
+FMRIPREP_DIR="${13:-${SOURCEDATA:+${SOURCEDATA}/derivatives/fmriprep}}"
+COV_SESSION="${15:-01}"
+BRAINSTEM_MASK="${16:-}"          # optional explicit brainstem mask (Task 05 C3)
 
 echo "============================================"
 echo " STEP 08b — Group analysis (cases vs controls)"
@@ -57,7 +75,9 @@ echo " Task root:     ${TASK_ROOT}"
 echo " Cases list:    ${CASES_LIST}"
 echo " Controls list: ${CONTROLS_LIST}"
 echo " Output:        ${OUTPUT_DIR}"
-echo " Combined:      ${DO_COMBINED}"
+echo " Combined:      ${DO_COMBINED}  (mode: ${COMBINED_MODE})"
+echo " Covariates:    ${COVARIATES}"
+echo " Brainstem mask: ${BRAINSTEM_MASK:-(none)}"
 echo " Date:          $(date)"
 echo "============================================"
 echo ""
@@ -83,9 +103,33 @@ mkdir -p "${OUTPUT_DIR}"
 
 if [ "${DO_COMBINED}" = "1" ]; then COMB_ML="true"; else COMB_ML="false"; fi
 
+# ── Optional covariates (Task 08) ─────────────────────────────────────────────
+# Build a clean group_covariates.tsv from participants.tsv + fMRIPrep confounds,
+# and turn the comma list into a MATLAB cellstr {'age','sex',...}.
+COV_ML="{}"
+COV_FILE=""
+if [ "${COVARIATES}" != "none" ] && [ -n "${COVARIATES}" ]; then
+    COV_FILE="${OUTPUT_DIR}/group_covariates.tsv"
+    builder="${SCRIPT_DIR}/utility/build_group_covariates.py"
+    echo "Building covariates (${COVARIATES}) -> ${COV_FILE}"
+    python3 "${builder}" \
+        --participants "${PARTICIPANTS_TSV:-}" \
+        --fmriprep-dir "${FMRIPREP_DIR:-}" \
+        --output "${COV_FILE}" \
+        --session "${COV_SESSION}" \
+        || echo "WARNING: covariate build failed — proceeding without covariates"
+    IFS=',' read -ra _cv <<< "${COVARIATES}"
+    parts=""
+    for c in "${_cv[@]}"; do parts="${parts}'${c}',"; done
+    COV_ML="{${parts%,}}"
+fi
+
 matlab_cmd="addpath('${MATLAB_CODE_DIR}'); \
 glm_spm_secondlevel_groups('${TASK_ROOT}', '${CASES_LIST}', '${CONTROLS_LIST}', \
-    '${OUTPUT_DIR}', '${SPM_DIR}', 'DoCombined', ${COMB_ML});"
+    '${OUTPUT_DIR}', '${SPM_DIR}', 'DoCombined', ${COMB_ML}, \
+    'CombinedMode', '${COMBINED_MODE}', \
+    'Covariates', ${COV_ML}, 'CovariatesFile', '${COV_FILE}', \
+    'BrainstemMask', '${BRAINSTEM_MASK}');"
 
 echo "Running MATLAB group analysis..."
 "${MATLAB_EXE}" -nodisplay -nosplash -batch "${matlab_cmd}"

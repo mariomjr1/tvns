@@ -40,6 +40,9 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     addParameter(p, 'FS_OUT',      40,   @(x) isnumeric(x)&&isscalar(x));
     addParameter(p, 'TR_FALLBACK', 1.19, @(x) isnumeric(x)&&isscalar(x));
     addParameter(p, 'SESSION',     '01', @(x) ischar(x)||isstring(x));
+    % Cardiac=1 uses R-DECO peaks for cardiac regressors; Cardiac=0 forces
+    % RESPIRATION-ONLY (skip R-DECO entirely) — use when piezo QC is BAD.
+    addParameter(p, 'Cardiac',     1,    @(x) isnumeric(x)&&isscalar(x));
     parse(p, input_dir, output_dir, bids_subject_id, sourcedata_dir, varargin{:});
 
     input_dir       = char(p.Results.input_dir);
@@ -50,6 +53,7 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     fs_out          = p.Results.FS_OUT;
     tr_fallback     = p.Results.TR_FALLBACK;
     session         = char(p.Results.SESSION);
+    use_cardiac     = logical(p.Results.Cardiac);
     sr              = 1000;   % physio sampling rate (always 1000 Hz from physioparse)
 
     % ── Suppress figure windows (headless cluster) ────────────────────────────
@@ -83,6 +87,11 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     fprintf(' Input:        %s\n', input_dir);
     fprintf(' Output:       %s\n', output_dir);
     fprintf(' SMS=%d  FS_OUT=%d  TR_fallback=%.3f\n', SMS, fs_out, tr_fallback);
+    if use_cardiac
+        fprintf(' Cardiac:      ON (cardiac + respiration regressors)\n');
+    else
+        fprintf(' Cardiac:      OFF — RESPIRATION-ONLY (R-DECO skipped; bad piezo)\n');
+    end
     fprintf(' Found:        %d filtered mat(s)\n\n', numel(mats));
 
     n_ok   = 0;
@@ -120,16 +129,22 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
             end
             physio = raw.physio;
 
-            % ── Load R-DECO peaks if available ────────────────────────────────
-            rdeco_path = fullfile(input_dir, [stem(1:end-9) '_rdeco.mat']);
+            % ── Load R-DECO peaks if available (and cardiac enabled) ──────────
             % stem(1:end-9) strips '_filtered'
-            [piezoout, has_rdeco] = load_rdeco_optional(rdeco_path);
-            if has_rdeco
-                physio.piezoout = piezoout;
-                fprintf('  R-DECO: loaded %d R-peaks\n', numel(piezoout));
+            if use_cardiac
+                rdeco_path = fullfile(input_dir, [stem(1:end-9) '_rdeco.mat']);
+                [piezoout, has_rdeco] = load_rdeco_optional(rdeco_path);
+                if has_rdeco
+                    physio.piezoout = piezoout;
+                    fprintf('  R-DECO: loaded %d R-peaks\n', numel(piezoout));
+                else
+                    piezoout = [];
+                    fprintf('  R-DECO: not found — cardiac regressors will be skipped\n');
+                end
             else
                 piezoout = [];
-                fprintf('  R-DECO: not found — cardiac regressors will be skipped\n');
+                has_rdeco = false;
+                fprintf('  Cardiac OFF — respiration-only (R-DECO skipped)\n');
             end
 
             % ── Read TR from BIDS JSON sidecar ────────────────────────────────

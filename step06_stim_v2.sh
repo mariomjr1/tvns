@@ -47,6 +47,13 @@
 #   python_exe        Python interpreter           default: python3
 #   qc                1 to generate QC plots, 0 to skip   default: 0
 #   no_firstlevel     1 to skip PART 3             default: 0
+#   retroicor_output  retroicor output dir (arg 13)
+#   fd_thresh         FD spike threshold (mm) for motion regressors  default: 0.5
+#
+#   PART 3 now GENERATES motion regressors from the fMRIPrep confounds TSVs
+#   (6 rigid params + one FD-spike regressor per high-motion volume) via
+#   utility/extract_motion_regressors.py, instead of relying on a pre-existing
+#   *_motion_regressors.txt. A per-subject .log is written to <first_level>/logs.
 # ============================================================================
 
 set -euo pipefail
@@ -74,8 +81,10 @@ PYTHON="${10:-python3}"
 DO_QC="${11:-0}"
 SKIP_FIRSTLEVEL="${12:-0}"
 RETROICOR_OUTPUT="${13:-${SOURCEDATA}/derivatives/physio/${BIDS_SUBJ}/retroicor/output}"
+FD_THRESH="${14:-0.5}"
 
 EXTRACTOR="${SCRIPT_DIR}/utility/extract_stim_onsets.py"
+MOTION_EXTRACTOR="${SCRIPT_DIR}/utility/extract_motion_regressors.py"
 
 echo "============================================"
 echo " STEP 06 — Stimulus trigger extraction"
@@ -85,6 +94,7 @@ echo " Stim dir:   ${STIM_DIR}"
 echo " Session:    ses-${SESSION}"
 echo " Threshold:  ${THRESHOLD}  Debounce: ${DEBOUNCE} s"
 echo " QC plots:   ${DO_QC}"
+echo " FD spike threshold: ${FD_THRESH} mm"
 echo " Retroicor output: ${RETROICOR_OUTPUT}"
 echo " Date:       $(date)"
 echo "============================================"
@@ -93,7 +103,7 @@ echo ""
 # ── Validate ──────────────────────────────────────────────────────────────────
 if [ ! -d "${PARSED_DIR}" ]; then
     echo "ERROR: Parsed physio directory not found: ${PARSED_DIR}"
-    echo "  Run step03_physioparse_v2.sh first."
+    echo "  Run step02_physioparse_v2.sh first."
     exit 1
 fi
 
@@ -187,11 +197,12 @@ else
 
     # Numbered sub-folders (ordered, self-documenting). The GLM (step07) also
     # accepts the legacy unnumbered names for backward compatibility.
+    # NEW PIPELINE (RETROICOR → fMRIPrep): no 03_retroicor_regressors — physio is
+    # removed from the image before fMRIPrep, so the GLM uses motion only.
     D_STIM="${FIRSTLEVEL_DIR}/01_stim_onsets"
     D_MOTION="${FIRSTLEVEL_DIR}/02_motion_regressors"
-    D_RETRO="${FIRSTLEVEL_DIR}/03_retroicor_regressors"
     D_BOLD="${FIRSTLEVEL_DIR}/04_bolds"
-    mkdir -p "${D_STIM}" "${D_MOTION}" "${D_RETRO}" "${D_BOLD}"
+    mkdir -p "${D_STIM}" "${D_MOTION}" "${D_BOLD}"
 
     # Stim files
     n_stim=0
@@ -202,31 +213,38 @@ else
     done
     echo " Stim files:      ${n_stim}"
 
-    # Motion regressors from fMRIPrep (*_motion_regressors.txt).
-    # They may live in the subject ROOT (<subj>/<subj>_ses-..._motion_regressors.txt)
-    # or in the func dir (<subj>/ses-01/func/...). Search both.
+    # Motion regressors: GENERATE from fMRIPrep confounds TSVs
+    # (6 rigid params + one FD-spike regressor per volume with FD > FD_THRESH).
+    # Then fall back to any pre-existing *_motion_regressors.txt (legacy).
     fmriprep_subj="${FMRIPREP_DIR}/${BIDS_SUBJ}"
-    n_motion=0
+    MOTION_LOG_DIR="${FIRSTLEVEL_DIR}/logs"
+    if [ -f "${MOTION_EXTRACTOR}" ] && [ -d "${fmriprep_func}" ]; then
+        echo " Generating motion regressors (6 rigid + FD>${FD_THRESH} mm spikes)..."
+        "${PYTHON}" "${MOTION_EXTRACTOR}" \
+            "${fmriprep_func}" \
+            "${D_MOTION}" \
+            --subject   "${BIDS_SUBJ}" \
+            --session   "${SESSION}" \
+            --fd-thresh "${FD_THRESH}" \
+            --log-dir   "${MOTION_LOG_DIR}" \
+            || echo "  WARNING: motion regressor generation failed"
+    else
+        echo " WARNING: cannot generate motion regressors"
+        echo "   (missing ${MOTION_EXTRACTOR} or func dir ${fmriprep_func})"
+    fi
+    # Legacy fallback: copy pre-existing *_motion_regressors.txt not already present
     for f in "${fmriprep_subj}"/*_motion_regressors.txt \
              "${fmriprep_func}"/*_motion_regressors.txt; do
         [ -f "$f" ] || continue
-        cp -f "$f" "${D_MOTION}/"
-        n_motion=$((n_motion+1))
+        bn=$(basename "$f")
+        [ -f "${D_MOTION}/${bn}" ] || cp -f "$f" "${D_MOTION}/"
     done
-    echo " Motion regressors (fMRIPrep): ${n_motion}"
+    n_motion=$(find "${D_MOTION}" -maxdepth 1 -name "${BIDS_SUBJ}_*_motion_regressors.txt" 2>/dev/null | wc -l | tr -d ' ')
+    echo " Motion regressors: ${n_motion}   (log: ${MOTION_LOG_DIR})"
 
-    # Retroicor regressors (*_retro-regressors.mat)
-    n_retro=0
-    if [ -d "${RETROICOR_OUTPUT:-/nonexistent}" ]; then
-        for f in "${RETROICOR_OUTPUT}"/*_retro-regressors.mat; do
-            [ -f "$f" ] || continue
-            cp -f "$f" "${D_RETRO}/"
-            n_retro=$((n_retro+1))
-        done
-    fi
-    echo " Retroicor regressors: ${n_retro}"
+    # (RETROICOR regressors are no longer assembled — physio removed pre-fMRIPrep.)
 
-    # T1w-space preprocessed BOLD from fMRIPrep
+    # T1w-space preprocessed BOLD from fMRIPrep (now physio-cleaned)
     n_bolds=0
     if [ -d "${fmriprep_func:-/nonexistent}" ]; then
         for f in "${fmriprep_func}"/*_space-T1w_desc-preproc_bold.nii.gz; do

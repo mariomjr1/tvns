@@ -149,7 +149,7 @@ function preproc_filter_per_sequence(input_dir, output_dir, bids_subject_id, var
     fprintf('  1. Open each *_rpiezo.mat in R-DECO (utility/r-deco-master/R_DECO.m)\n');
     fprintf('  2. Run automatic R-peak detection, correct manually if needed\n');
     fprintf('  3. Save R-DECO output as *_rdeco.mat in the same output folder\n');
-    fprintf('  4. Run step05_retroicor_v2.sh to generate 1D files and run RETROICOR\n');
+    fprintf('  4. Run step04_retroicor_v2.sh to generate 1D files and run RETROICOR\n');
     fprintf('========================================\n\n');
 end
 

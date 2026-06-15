@@ -21,7 +21,7 @@ The recording device captures four signals simultaneously. They are stored as fo
 | 1 | **RESP** | Respiration — the subject's breathing pattern. The signal goes up when the chest expands and down when it contracts. |
 | 2 | **RPIEZO** | Heart rate via a piezoelectric sensor placed on the chest or finger. The signal shows a pulse peak with each heartbeat. |
 | 3 | **STIMTRIG** | Stimulus trigger — a TTL pulse sent by the stimulus computer when a visual or other stimulus is shown to the subject. Only active during stimulation tasks. |
-| 4 | **MRTRIG** | MRI trigger — a TTL pulse sent by the MRI scanner at the beginning of every volume acquisition. This is the most important channel for timing. |
+| 4 | **MRTRIG** | MRI trigger — a TTL pulse emitted during scanner sequences configured to send it, commonly once per acquired BOLD volume. Some sequences emit no MRTRIG. |
 
 A **TTL pulse** (channels 3 and 4) is a digital on/off signal: the voltage jumps from 0 to a high value at the moment of the event, then drops back to 0. The rising edge (the jump upward) marks the exact moment the trigger occurred.
 
@@ -35,15 +35,25 @@ However, the MRI scanner uses **clock time** (e.g., 14:34:19) to timestamp when 
 
 **Pseudotime** bridges this gap. It is defined as:
 
-> The position of each event within the physiological recording, expressed in seconds, using the **first MRI trigger** as the anchor point (time zero).
+> The position of each event within the physiological recording, expressed in
+> seconds after synchronizing LabChart sample time with scanner clock time using a
+> known trigger-bearing sequence.
 
 ### How the anchor works
 
-1. The pipeline finds the very first rising edge in the MRTRIG channel. This is the first volume of the first MRI sequence (always `task-rest_run-01`).
-2. That sample number becomes the **anchor** — the point where the physiological clock and the MRI clock are synchronized.
+1. The current pipeline finds the first rising edge in the MRTRIG channel and treats
+   it as the first volume of `task-rest_run-01`. This assumption must be verified
+   against the expected rest window.
+2. That sample number becomes the **anchor** — the point where the physiological
+   clock and scanner clock are synchronized.
 3. The real clock time of `task-rest_run-01` is read from its BIDS JSON file (`AcquisitionTime`).
 4. Every other sequence has a known `AcquisitionTime` too. The difference in seconds between that sequence's `AcquisitionTime` and the anchor's `AcquisitionTime` is the **offset**.
-5. Adding that offset to the anchor's sample position gives the pseudotime of the other sequence.
+5. Adding that offset to the anchor's sample position gives the pseudotime of the
+   other sequence, including sequences that emit no MRTRIG.
+
+For a trigger-bearing sequence, a burst near the predicted boundary can refine and
+validate the start. For a triggerless sequence, the acquisition-time pseudotime is
+the intended boundary and zero MRTRIG pulses is not an error.
 
 ### Example
 
@@ -59,7 +69,9 @@ task-BlockStim_run-01:
   Sample in recording = 1,999,937
 ```
 
-This means that if you take sample 1,999,937 from the MRTRIG channel, you should see the first MRI trigger of the BlockStim sequence.
+If BlockStim is configured to emit MRTRIG, a burst should begin near sample
+1,999,937 and can refine the boundary. For a triggerless sequence, the same
+pseudotime sample remains its estimated start even though MRTRIG stays flat.
 
 ---
 

@@ -42,6 +42,23 @@ import matplotlib.pyplot as plt
 
 # ── Core extraction ───────────────────────────────────────────────────────────
 
+def count_mr_triggers(mrtrig: np.ndarray, fs: int = 1000, min_gap_s: float = 0.3) -> int:
+    """Count discrete MR-trigger rising edges (one per acquired volume).
+    Debounced so a multi-sample edge counts once."""
+    d = np.diff(mrtrig.astype(float))
+    if d.size == 0 or d.max() <= 0:
+        return 0
+    cand = np.where(d > d.max() * 0.30)[0]
+    if len(cand) == 0:
+        return 0
+    gap = int(min_gap_s * fs)
+    trig = [int(cand[0])]
+    for c in cand[1:]:
+        if c - trig[-1] >= gap:
+            trig.append(int(c))
+    return len(trig)
+
+
 def extract_onsets(stimtrig: np.ndarray, mrtrig: np.ndarray,
                    fs: int = 1000,
                    threshold: float = 1.5,
@@ -49,13 +66,21 @@ def extract_onsets(stimtrig: np.ndarray, mrtrig: np.ndarray,
     """
     Detect stimulus onset/offset pairs from STIMTRIG aligned to first MR trigger.
 
+    Each onset is paired with the first offset that falls BEFORE the next onset
+    (so a missing/late offset can't create a spurious duration spanning the gap to
+    the next block). Onsets without such an offset are reported as dropped.
+
     Returns
     -------
     stims : np.ndarray  shape (N, 3) — [onset_sec, duration_sec, 1]
-                        or shape (0, 3) if no valid pairs found
     t_rel : np.ndarray  time axis of clipped STIMTRIG (seconds from first MR trigger)
     stim_clip : np.ndarray  clipped + clamped STIMTRIG signal
+    info : dict  diagnostics (n_mr_triggers, n_onsets, n_offsets, n_paired,
+                 n_dropped, recording_s)
     """
+    # Discrete MR triggers (≈ number of acquired volumes — for the volume-count check)
+    n_mr = count_mr_triggers(mrtrig, fs)
+
     # Find first MR trigger (rising edge in MRTRIG)
     mrtrig_diff = np.diff(mrtrig.astype(float))
     peaks = np.where(mrtrig_diff > mrtrig_diff.max() * 0.30)[0]
@@ -97,25 +122,35 @@ def extract_onsets(stimtrig: np.ndarray, mrtrig: np.ndarray,
     on_times  = t_rel[start_inds] if len(start_inds) else np.array([])
     off_times = t_rel[stop_inds]  if len(stop_inds)  else np.array([])
 
-    # Pair each onset with the next offset
-    paired_on  = []
-    paired_off = []
-    j = 0
-    for ot in on_times:
-        while j < len(off_times) and off_times[j] <= ot:
-            j += 1
-        if j < len(off_times):
+    # Pair onset[i] with the first offset in (onset[i], onset[i+1]); else drop it
+    paired_on, paired_off = [], []
+    n_dropped = 0
+    oj = 0
+    for i, ot in enumerate(on_times):
+        next_on = on_times[i + 1] if (i + 1) < len(on_times) else np.inf
+        while oj < len(off_times) and off_times[oj] <= ot:
+            oj += 1
+        if oj < len(off_times) and off_times[oj] < next_on:
             paired_on.append(ot)
-            paired_off.append(off_times[j])
-            j += 1
+            paired_off.append(off_times[oj])
+            oj += 1
+        else:
+            n_dropped += 1   # no offset before the next onset (overlap / missed edge)
+
+    info = {"n_mr_triggers": n_mr,
+            "n_onsets": int(len(on_times)),
+            "n_offsets": int(len(off_times)),
+            "n_paired": int(len(paired_on)),
+            "n_dropped": int(n_dropped),
+            "recording_s": round(n / fs, 1)}
 
     if not paired_on:
-        return np.zeros((0, 3)), t_rel, stim_clip
+        return np.zeros((0, 3)), t_rel, stim_clip, info
 
     stims = np.ones((len(paired_on), 3))
     stims[:, 0] = paired_on
     stims[:, 1] = np.array(paired_off) - np.array(paired_on)
-    return stims, t_rel, stim_clip
+    return stims, t_rel, stim_clip, info
 
 
 # ── QC plot ───────────────────────────────────────────────────────────────────
@@ -162,7 +197,9 @@ def make_qc_plot(t_rel: np.ndarray, stim_clip: np.ndarray,
 def process_one(mat_path: str, bids_subject_id: str, output_dir: str,
                 session: str = "01", threshold: float = 1.5,
                 debounce_sec: float = 1.5, generate_qc: bool = False,
-                qc_dir: str | None = None) -> dict:
+                qc_dir: str | None = None,
+                expected_events: int | None = None,
+                n_volumes: int | None = None) -> dict:
     """
     Process a single parsed mat file.  Returns a summary dict.
     """
@@ -188,7 +225,7 @@ def process_one(mat_path: str, bids_subject_id: str, output_dir: str,
     fs_arr   = raw.get("sampling_rate", np.array([[1000]]))
     fs       = int(np.asarray(fs_arr).flatten()[0])
 
-    stims, t_rel, stim_clip = extract_onsets(
+    stims, t_rel, stim_clip, info = extract_onsets(
         stimtrig, mrtrig, fs=fs, threshold=threshold, debounce_sec=debounce_sec)
 
     # Save STIMS table (ASCII, space-separated: onset dur 1)
@@ -200,6 +237,20 @@ def process_one(mat_path: str, bids_subject_id: str, output_dir: str,
         with open(out_txt, "w") as fh:
             fh.write("# No stimulus events detected\n")
 
+    # ── Robustness checks (Task 11) ───────────────────────────────────────────
+    warnings = []
+    if info["n_dropped"] > 0:
+        warnings.append(f"{info['n_dropped']} onset(s) had no offset before the next onset "
+                        f"(overlap / missed edge / debounce too large)")
+    if expected_events is not None and info["n_paired"] != expected_events:
+        warnings.append(f"detected {info['n_paired']} events but expected {expected_events} "
+                        f"(tune --threshold / --debounce)")
+    # MR-trigger vs BOLD volume-count: onsets are timed from the first MR trigger, so a
+    # mismatch with the modeled BOLD #volumes shifts every onset (dummy-scan drop, etc.)
+    if n_volumes is not None and info["n_mr_triggers"] != n_volumes:
+        warnings.append(f"MR triggers ({info['n_mr_triggers']}) != BOLD volumes ({n_volumes}) "
+                        f"— onsets may be shifted vs the fMRIPrep BOLD timeline")
+
     summary = {
         "mat":      mat_name,
         "task":     task,
@@ -207,6 +258,8 @@ def process_one(mat_path: str, bids_subject_id: str, output_dir: str,
         "n_events": len(stims),
         "output":   out_txt,
         "stims":    stims,
+        "info":     info,
+        "warnings": warnings,
     }
 
     # Optional QC plot
@@ -239,6 +292,10 @@ def main():
                     help="Generate QC plot")
     ap.add_argument("--qc-dir",    default=None,
                     help="QC plot directory (default: output_dir/qc/)")
+    ap.add_argument("--expected-events", type=int, default=None,
+                    help="Warn if the detected event count differs from this (paradigm check)")
+    ap.add_argument("--n-volumes", type=int, default=None,
+                    help="Warn if the MR-trigger count differs from this (BOLD volume-count check)")
     args = ap.parse_args()
 
     try:
@@ -251,11 +308,19 @@ def main():
             debounce_sec=args.debounce,
             generate_qc=args.qc,
             qc_dir=args.qc_dir,
+            expected_events=args.expected_events,
+            n_volumes=args.n_volumes,
         )
         n = result["n_events"]
+        info = result["info"]
         qc_str = f"  QC: {result.get('qc_plot', '')}" if args.qc else ""
         print(f"[OK] {result['task']} run-{result['run']}: "
               f"{n} event(s) -> {result['output']}{qc_str}")
+        print(f"     MR triggers={info['n_mr_triggers']}  onsets={info['n_onsets']}  "
+              f"offsets={info['n_offsets']}  paired={info['n_paired']}  "
+              f"dropped={info['n_dropped']}  rec={info['recording_s']}s")
+        for w in result["warnings"]:
+            print(f"     [WARN] {w}", file=sys.stderr)
         sys.exit(0)
     except Exception as e:
         print(f"[ERROR] {e}", file=sys.stderr)

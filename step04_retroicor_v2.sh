@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # ============================================================================
-# step05_retroicor_v2.sh
+# step04_retroicor_v2.sh   (NEW ORDER: runs before fMRIPrep)
 # Created by Mario Murakami
 #
 # Run the complete RETROICOR pipeline for one subject, using:
-#   - Preprocessed physio mats from step04 (*_filtered.mat)
+#   - Preprocessed physio mats from step03 (*_filtered.mat)
 #   - R-DECO cardiac annotation outputs (*_rdeco.mat, optional)
+# Produces *_retro-corrected.nii.gz (native space) which step05 feeds to fMRIPrep.
 #
 # Pipeline:
 #   PART 1  Generate 1D files    preproc_generate_1D_v2.m
@@ -22,7 +23,7 @@
 #           Outputs *_retro-corrected.nii.gz + regressors + phase files.
 #
 # Usage:
-#   bash step05_retroicor_v2.sh <bids_subject_id> [options]
+#   bash step04_retroicor_v2.sh <bids_subject_id> [options]
 #
 # Required:
 #   bids_subject_id   BIDS subject (e.g. sub-7T1019HC042726)
@@ -70,9 +71,11 @@ SESSION="${9:-01}"
 SMS_FLAG="${10:-1}"
 FS_OUT="${11:-40}"
 TR_FALLBACK="${12:-1.19}"
+# Cardiac: 1 = cardiac + respiration (needs R-DECO); 0 = RESPIRATION-ONLY (bad piezo)
+CARDIAC="${13:-1}"
 
 echo "============================================"
-echo " STEP 05 — RETROICOR"
+echo " STEP 04 — RETROICOR (native-space physio correction, before fMRIPrep)"
 echo " Subject:    ${BIDS_SUBJ}"
 echo " Sourcedata: ${SOURCEDATA}"
 echo " Preproc:    ${PREPROC_DIR}"
@@ -86,7 +89,7 @@ echo ""
 # ── Validate inputs ───────────────────────────────────────────────────────────
 if [ ! -d "${PREPROC_DIR}" ]; then
     echo "ERROR: Preprocessed directory not found: ${PREPROC_DIR}"
-    echo "  Run step04_preprocess_for_retroicor_v2.sh first."
+    echo "  Run step03_preprocess_for_retroicor_v2.sh first."
     exit 1
 fi
 
@@ -98,7 +101,12 @@ fi
 echo " Found ${n_filt} filtered mat(s)."
 
 n_rdeco=$(find "${PREPROC_DIR}" -maxdepth 1 -name "${BIDS_SUBJ}_task-*_rdeco.mat" | wc -l)
-echo " Found ${n_rdeco} R-DECO file(s) (cardiac regressors)."
+if [ "${CARDIAC}" = "1" ]; then
+    echo " Found ${n_rdeco} R-DECO file(s) (cardiac regressors)."
+    echo " Cardiac mode: ON (cardiac + respiration)"
+else
+    echo " Cardiac mode: OFF — RESPIRATION-ONLY (R-DECO ignored; use for bad piezo)"
+fi
 echo ""
 
 # ── Source environment ────────────────────────────────────────────────────────
@@ -129,6 +137,7 @@ preproc_generate_1D_v2( \
     'SMS', ${SMS_FLAG}, \
     'FS_OUT', ${FS_OUT}, \
     'TR_FALLBACK', ${TR_FALLBACK}, \
+    'Cardiac', ${CARDIAC}, \
     'SESSION', '${SESSION}');"
 
 "${MATLAB_EXE}" -nodisplay -nosplash -batch "${matlab_cmd_p1}"
@@ -198,8 +207,8 @@ if [ ${retro_exit} -eq 0 ]; then
     echo " Next steps:"
     echo "   - Review regressors: *_retro-regressors.mat"
     echo "   - Check % variance reduced: *_retro-pctvar.mat"
-    echo "   - Run step13 (optional) to compare pre/post with a GIF"
-    echo "   - Use corrected BOLDs in first-level GLM (step22)"
+    echo "   - Inspect *_retro-corrected.nii.gz (these feed fMRIPrep)"
+    echo "   - Run step05_fmriprep_v2.sh — fMRIPrep on the corrected BOLD"
     echo "============================================"
 else
     echo "ERROR: retroicor_batch exited with code ${retro_exit}"

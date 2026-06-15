@@ -13,8 +13,9 @@ Step 1 is the foundation of the entire pipeline. It answers the question: **at w
 It does this in five stages:
 
 1. Reads the `AcquisitionTime` from every BIDS JSON file in the data folder
-2. Loads the MRTRIG channel from the `.mat` file and detects every MRI trigger (rising edge)
-3. Identifies the first trigger as the anchor point for `task-rest_run-01`
+2. Loads the MRTRIG channel from the `.mat` file and detects available MRI triggers
+3. Uses a known trigger-bearing sequence (`task-rest_run-01` in the current code) as
+   the scanner-clock/LabChart anchor
 4. Calculates the pseudotime of every other sequence by adding timing offsets
 5. Optionally verifies the result against any pre-existing parsed `.mat` files
 6. Saves everything to `pseudotime_mapping.json`
@@ -99,7 +100,10 @@ The result is a list of sample indices where an MRI trigger occurred.
 
 ### Stage 3: Anchor to task-rest_run-01
 
-The first trigger in the entire MRTRIG channel marks the start of `task-rest_run-01`. This sample index is the **anchor** — the point where the physiological recording's sample clock and the real-world clock are connected.
+The current implementation assumes the first trigger in the entire MRTRIG channel
+marks the start of `task-rest_run-01`. This sample index is the **anchor** where the
+physiological recording's sample clock and scanner clock are connected. Task 31
+tracks adding an anchor plausibility check and midnight-rollover handling.
 
 ```
 anchor_sample     = first_trigger_index
@@ -117,7 +121,9 @@ pseudotime   = anchor_pseudotime + offset  (seconds)
 sample_index = round(pseudotime × 1000)
 ```
 
-This gives the exact sample in the physiological recording where that sequence's first MRI volume started.
+This gives the predicted start sample in the physiological recording. It is also the
+primary boundary for sequences that do not emit MRTRIG. Trigger-bearing BOLD
+cardinality checks are tracked separately in Task 25.
 
 ### Stage 5: Verification (optional)
 
@@ -195,6 +201,6 @@ The block1 variant shows all four channels directly (no `datastart`/`dataend` ne
 | Problem | Symptom | Cause |
 |---------|---------|-------|
 | Wrong format selected | "ERROR: 'data_block1' key not found" or missing `datastart` key | Mismatch between selected format and actual `.mat` file |
-| No triggers found | "ERROR: No triggers found in MRTRIG channel!" | The MRTRIG channel is flat (no scanner was running, or wrong channel order) |
+| No triggers found for the anchor | `"ERROR: No triggers found in MRTRIG channel!"` | The current mapper cannot synchronize clocks without a known trigger-bearing anchor. This does not imply that every later sequence must contain triggers. |
 | No anchor | "ERROR: task-rest_run-01 JSON not found" | The JSON file for the first sequence is missing or named differently |
 | Verification mismatch | "✗ parcel: N triggers, big file: M" | The pseudotime is off — check whether the `.mat` file matches the session |

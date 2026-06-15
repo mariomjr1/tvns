@@ -78,5 +78,26 @@ while IFS= read -r subj_id; do
 
 done < "${SUBJ_LIST}"
 
+# ── PART 2: Generate BIDS subject list (moved here from old step02) ───────────
+# Convert each raw scanner ID to a BIDS ID and write utility/SubjectListBIDS.txt,
+# which the physiological branch (step02–04), fMRIPrep (step05), and the GLM
+# (step07) all consume. Rule: remove underscores, prepend 'sub-'.
+#   7T1019HC_042726  ->  sub-7T1019HC042726
+bids_subj_list="${SCRIPT_DIR}/utility/SubjectListBIDS.txt"
+echo ""
+echo "============================================"
+echo " PART 2: Generating BIDS subject list"
+echo "============================================"
+> "${bids_subj_list}"
+while IFS= read -r line; do
+    [ -z "${line}" ] && continue
+    bids_id="sub-${line//_/}"
+    echo "${bids_id}" >> "${bids_subj_list}"
+    echo "  ${line}  ->  ${bids_id}"
+done < "${SUBJ_LIST}"
+n_subjects=$(grep -c . "${bids_subj_list}")
+echo " Saved ${n_subjects} subject(s) to: ${bids_subj_list}"
+
 echo ""
 echo " Done. $(date)"
+echo " Next: step02 (physioparse) — the physiological branch runs before fMRIPrep."

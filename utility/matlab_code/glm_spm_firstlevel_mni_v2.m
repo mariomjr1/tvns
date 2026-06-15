@@ -12,7 +12,7 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 % Usage:
 %   glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 %       firstlevel_dir, output_dir, spm_dir)
-%   glm_spm_firstlevel_mni_v2(..., 'TR',1.19, 'Tasks',{'BlockStim','ContinuousStim','rest'}, ...
+%   glm_spm_firstlevel_mni_v2(..., 'TR',1.19, 'Tasks',{'BlockStim','ContinuousStim'}, ...
 %       'Session','01', 'Run','01', 'SmoothFWHM',[3 3 3], 'DoMNI',true, ...
 %       'MNIRef','', 'SmoothPrefix','s3', 'WarpOnly',false, 'SourceData','')
 %
@@ -28,7 +28,8 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 %
 % Optional name-value:
 %   TR            scalar seconds (default 1.19)
-%   Tasks         cellstr of task names (default {'ContinuousStim','BlockStim','rest'})
+%   Tasks         cellstr of task names (default {'ContinuousStim','BlockStim'};
+%                 'rest' is a baseline and is skipped — not a Stim contrast)
 %   Session       BIDS session, no 'ses-' (default '01')
 %   Run           BIDS run, no 'run-' (default '01')
 %   SmoothFWHM    [x y z] mm (default [3 3 3])
@@ -52,7 +53,9 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     addRequired(p, 'output_dir');
     addRequired(p, 'spm_dir');
     addParameter(p, 'TR',           1.19,  @(x) isnumeric(x)&&isscalar(x));
-    addParameter(p, 'Tasks',        {'ContinuousStim','BlockStim','rest'}, @iscell);
+    % 'rest' is a resting baseline (no stimulus) — NOT a Stim-contrast task, so it
+    % is excluded by default. It is skipped with a note even if passed in. (Task 10.)
+    addParameter(p, 'Tasks',        {'ContinuousStim','BlockStim'}, @iscell);
     addParameter(p, 'Session',      '01',  @(x) ischar(x)||isstring(x));
     addParameter(p, 'Run',          '01',  @(x) ischar(x)||isstring(x));
     addParameter(p, 'SmoothFWHM',   [3 3 3], @(x) isnumeric(x)&&numel(x)==3);
@@ -61,6 +64,19 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     addParameter(p, 'MNIRef',       '',    @(x) ischar(x)||isstring(x));
     addParameter(p, 'WarpOnly',     false, @(x) islogical(x)||isnumeric(x));
     addParameter(p, 'SourceData',   '',    @(x) ischar(x)||isstring(x));
+    % Space to model the first level in (Task 06):
+    %   'T1w'  — fMRIPrep T1w BOLD (con in T1w; optional SPM warp→MNI via DoMNI). Default.
+    %   'MNI'  — fMRIPrep MNI152NLin2009cAsym BOLD directly (con already in MNI → copied
+    %            to wcon_*; NO SPM segment-normalisation).
+    %   'both' — run T1w (in <subj>/<task>) AND MNI (in <subj>/<task>/mni).
+    addParameter(p, 'Space',        'T1w', @(x) ischar(x)||isstring(x));
+    % Brainstem restriction (Task 05 C2): explicit GLM mask = brainstem ∩ fMRIPrep
+    % brain mask. Optional (default off). The brainstem mask must be in the SAME
+    % space as the modeling (use Space='MNI' with an MNI brainstem mask).
+    % BrainstemSmoothFWHM (optional) overrides SmoothFWHM in brainstem mode.
+    addParameter(p, 'BrainstemMask',       '',    @(x) ischar(x)||isstring(x));
+    addParameter(p, 'RestrictBrainstem',   false, @(x) islogical(x)||isnumeric(x));
+    addParameter(p, 'BrainstemSmoothFWHM', [],    @(x) isnumeric(x));
     parse(p, subject_list_file, fmriprep_dir, firstlevel_dir, output_dir, spm_dir, varargin{:});
 
     R   = p.Results;
@@ -74,6 +90,19 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     warp_only = logical(R.WarpOnly);
     source_data = char(R.SourceData);
     spm_dir = char(R.spm_dir);
+    switch lower(char(R.Space))
+        case 't1w',  space_list = {'T1w'};
+        case 'mni',  space_list = {'MNI152NLin2009cAsym'};
+        case 'both', space_list = {'T1w', 'MNI152NLin2009cAsym'};
+        otherwise,   error('Space must be ''T1w'', ''MNI'', or ''both'' (got %s)', char(R.Space));
+    end
+    brainstem_mask = char(R.BrainstemMask);
+    restrict_bs    = logical(R.RestrictBrainstem);
+    bs_fwhm        = R.BrainstemSmoothFWHM;
+    if restrict_bs && (isempty(brainstem_mask) || exist(brainstem_mask, 'file') ~= 2)
+        warning('RestrictBrainstem on but BrainstemMask not found (%s) — ignoring.', brainstem_mask);
+        restrict_bs = false;
+    end
 
     % ── Setup SPM ─────────────────────────────────────────────────────────────
     set(0, 'DefaultFigureVisible', 'off');
@@ -135,16 +164,20 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 
         for t = 1:numel(tasks)
             task = tasks{t};
+            if strcmpi(task, 'rest')
+                fprintf('--- Task: rest --- (resting baseline — no Stim>baseline contrast; skipping)\n');
+                continue;
+            end
             fprintf('--- Task: %s ---\n', task);
 
             task_out = fullfile(output_dir, subj, task);
             if ~exist(task_out, 'dir'), mkdir(task_out); end
-            workdir = fullfile(task_out, 'work');
-            if ~exist(workdir, 'dir'), mkdir(workdir); end
 
-            % ── WARP-ONLY MODE: Skip GLM, only warp existing con_*.nii ────────
+            % ── WARP-ONLY MODE: Skip GLM, only warp existing T1w con_*.nii ────
             if warp_only
                 if do_mni
+                    workdir = fullfile(task_out, 'work');
+                    if ~exist(workdir, 'dir'), mkdir(workdir); end
                     t1_gz = find_t1w(fmriprep_dir, subj, ses);
                     if isempty(t1_gz)
                         warning('No T1w for MNI warp (skip): %s', subj);
@@ -162,188 +195,34 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
                 continue;  % Skip GLM
             end
 
-            % ── LOCATE (not copy) BOLD + mask in fMRIPrep func dir ────────────
-            bold_gz = fullfile(func_dir, sprintf( ...
-                '%s_ses-%s_task-%s_run-%s_space-T1w_desc-preproc_bold.nii.gz', ...
-                subj, ses, task, run));
-            mask_gz = fullfile(func_dir, sprintf( ...
-                '%s_ses-%s_task-%s_run-%s_space-T1w_desc-brain_mask.nii.gz', ...
-                subj, ses, task, run));
-
-            if ~exist(bold_gz, 'file')
-                warning('Missing BOLD (skip): %s', bold_gz); continue
-            end
-            if ~exist(mask_gz, 'file')
-                warning('Missing MASK (skip): %s', mask_gz); continue
-            end
-
-            % gunzip into workdir (originals stay untouched in fmriprep)
-            bold_nii = gunzip_to(bold_gz, workdir);
-            mask_nii = gunzip_to(mask_gz, workdir);
-
-            % Reslice mask into BOLD grid (NN, binary)
-            mask_in_bold = fullfile(workdir, ['mb_' basename(mask_nii)]);
-            if ~exist(mask_in_bold, 'file')
-                mask_in_bold = coreg_reslice_mask_to_bold(mask_nii, bold_nii, mask_in_bold);
-            end
-
-            % ── Check if already smoothed (s3sub* pattern) ────────────────────
-            [~, bn, be] = fileparts(bold_nii);
-            smoothed = fullfile(workdir, [smooth_prefix bn be]);
-            already_smoothed = startsWith(basename(bold_nii), smooth_prefix);
-            
-            if already_smoothed
-                fprintf('  Already smoothed (detected %s prefix) — skipping smoothing\n', smooth_prefix);
-                scans_sm = cellstr(spm_select('expand', bold_nii));
-            else
-                % Smooth the BOLD
-                scans_bold = cellstr(spm_select('expand', bold_nii));
-                if ~exist(smoothed, 'file')
-                    mb = [];
-                    mb{1}.spm.spatial.smooth.data   = scans_bold;
-                    mb{1}.spm.spatial.smooth.fwhm   = smooth_fwhm;
-                    mb{1}.spm.spatial.smooth.dtype  = 0;
-                    mb{1}.spm.spatial.smooth.im     = 0;
-                    mb{1}.spm.spatial.smooth.prefix = smooth_prefix;
-                    spm_jobman('run', mb);
-                end
-                scans_sm = cellstr(spm_select('expand', smoothed));
-            end
-
-            % ── Stim condition ────────────────────────────────────────────────
-            stim_file = fullfile(stim_dir, sprintf( ...
-                '%s_ses-%s_task-%s_run-%s_bold_stim.txt', subj, ses, task, run));
-            if ~exist(stim_file, 'file')
-                warning('Missing stim (skip): %s', stim_file); continue
-            end
-            S = read_stim_file(stim_file);
-            if isempty(S.onset)
-                warning('No stim onsets in %s (skip task)', stim_file); continue
-            end
-
-            cond = struct([]);
-            cond(1).name     = 'Stim';
-            cond(1).onset    = S.onset;
-            cond(1).duration = S.duration;
-            cond(1).tmod     = 0;
-            cond(1).pmod     = struct('name', {}, 'param', {}, 'poly', {});
-            cond(1).orth     = 1;
-
-            % ── Motion nuisance ───────────────────────────────────────────────
-            motion_file = fullfile(motion_dir, sprintf( ...
-                '%s_ses-%s_task-%s_run-%s_motion_regressors.txt', subj, ses, task, run));
-            if ~exist(motion_file, 'file')
-                warning('Missing motion regressors (continuing without): %s', motion_file);
-                motion_file = '';
-            end
-
-            % ── Retroicor regressors (optional) ────────────────────────────────
-            % BIDS bold base used by retroicor_batch for *_retro-regressors.mat
-            % (the ORIGINAL bold, not the space-T1w preproc name).
-            boldbase  = sprintf('%s_ses-%s_task-%s_run-%s_bold', subj, ses, task, run);
-            retro_dir = pick_dir(firstlevel_dir, {'03_retroicor_regressors', 'retroicor_regressors'});
-            retro_file = '';
-            if isdir(retro_dir)
-                retro_mat_files = dir(fullfile(retro_dir, [boldbase '_retro-regressors.mat']));
-                if ~isempty(retro_mat_files)
-                    retro_mat_path = fullfile(retro_dir, retro_mat_files(1).name);
-                    % Load REGRESSORS from mat file and convert to txt for SPM
-                    temp = load(retro_mat_path);
-                    if isfield(temp, 'REGRESSORS') && ~isempty(temp.REGRESSORS)
-                        % REGRESSORS dimensions: #timepoints x #regressors x #slices
-                        % Average across slices for multi-slice regressors
-                        RETRO_regressors = mean(temp.REGRESSORS, 3);
-                        retro_file = fullfile(task_out, [boldbase '_retro-regressors.txt']);
-                        writematrix(RETRO_regressors, retro_file, 'Delimiter', ' ');
-                        fprintf('  Loaded retroicor regressors: %s\n', retro_mat_path);
-                    end
-                end
-            end
-
-            % ── Combine motion + retroicor regressors ──────────────────────────
-            combined_regress_file = '';
-            if ~isempty(motion_file) || ~isempty(retro_file)
-                combined_regress_file = fullfile(task_out, [boldbase '_combined_regressors.txt']);
-                regressors_to_write = [];
-                
-                % Load motion regressors if available
-                if ~isempty(motion_file) && exist(motion_file, 'file')
-                    motion_data = readmatrix(motion_file);
-                    if size(motion_data, 1) > 0
-                        regressors_to_write = motion_data;
-                    end
-                end
-                
-                % Append retroicor regressors if available
-                if ~isempty(retro_file) && exist(retro_file, 'file')
-                    retro_data = readmatrix(retro_file);
-                    if size(retro_data, 1) > 0
-                        if isempty(regressors_to_write)
-                            regressors_to_write = retro_data;
-                        else
-                            regressors_to_write = [regressors_to_write, retro_data];
-                        end
-                    end
-                end
-                
-                % Write combined regressors file if we have data
-                if ~isempty(regressors_to_write)
-                    writematrix(regressors_to_write, combined_regress_file, 'Delimiter', ' ');
-                end
-            end
-
-            % ── Specify + estimate ────────────────────────────────────────────
-            mb = [];
-            mb{1}.spm.stats.fmri_spec.dir = {task_out};
-            mb{1}.spm.stats.fmri_spec.timing.units  = 'secs';
-            mb{1}.spm.stats.fmri_spec.timing.RT     = TR;
-            mb{1}.spm.stats.fmri_spec.timing.fmri_t = 16;
-            mb{1}.spm.stats.fmri_spec.timing.fmri_t0 = 8;
-            mb{1}.spm.stats.fmri_spec.sess(1).scans = scans_sm;
-            mb{1}.spm.stats.fmri_spec.sess(1).cond  = cond;
-            mb{1}.spm.stats.fmri_spec.sess(1).multi = {''};
-            mb{1}.spm.stats.fmri_spec.sess(1).regress = struct('name', {}, 'val', {});
-            mb{1}.spm.stats.fmri_spec.sess(1).multi_reg = { iff(~isempty(combined_regress_file), combined_regress_file, iff(~isempty(motion_file), motion_file, '')) };
-            mb{1}.spm.stats.fmri_spec.sess(1).hpf = 128;
-            mb{1}.spm.stats.fmri_spec.bases.hrf.derivs = [0 0];
-            mb{1}.spm.stats.fmri_spec.volt    = 1;
-            mb{1}.spm.stats.fmri_spec.global  = 'None';
-            mb{1}.spm.stats.fmri_spec.mask    = {mask_in_bold};
-            mb{1}.spm.stats.fmri_spec.mthresh = 0;
-            mb{1}.spm.stats.fmri_spec.cvi     = 'AR(1)';
-            spm_jobman('run', mb);
-
-            spm_mat = fullfile(task_out, 'SPM.mat');
-            mb = [];
-            mb{1}.spm.stats.fmri_est.spmmat = {spm_mat};
-            mb{1}.spm.stats.fmri_est.write_residuals = 0;
-            mb{1}.spm.stats.fmri_est.method.Classical = 1;
-            spm_jobman('run', mb);
-
-            % ── Contrasts ─────────────────────────────────────────────────────
-            mb = [];
-            mb{1}.spm.stats.con.spmmat = {spm_mat};
-            mb{1}.spm.stats.con.delete = 1;
-            mb{1}.spm.stats.con.consess{1}.tcon.name    = 'Stim > baseline';
-            mb{1}.spm.stats.con.consess{1}.tcon.weights = 1;
-            mb{1}.spm.stats.con.consess{1}.tcon.sessrep = 'none';
-            mb{1}.spm.stats.con.consess{2}.tcon.name    = 'Stim < baseline';
-            mb{1}.spm.stats.con.consess{2}.tcon.weights = -1;
-            mb{1}.spm.stats.con.consess{2}.tcon.sessrep = 'none';
-            spm_jobman('run', mb);
-
-            fprintf('First-level done: %s | %s\n', subj, task);
-
-            % ── MNI warp ──────────────────────────────────────────────────────
-            if do_mni
-                t1_gz = find_t1w(fmriprep_dir, subj, ses);
-                if isempty(t1_gz)
-                    warning('No T1w for MNI warp (skip warp): %s', subj);
+            % ── First-level GLM in the requested space(s) (Task 06) ──────────
+            % 'T1w' models the fMRIPrep T1w BOLD (con in T1w; optional SPM warp to
+            % MNI via DoMNI). 'MNI152NLin2009cAsym' models the fMRIPrep MNI BOLD
+            % directly — con is already in MNI and is copied to wcon_* (no warp).
+            for sp = 1:numel(space_list)
+                se = space_list{sp};
+                if strcmpi(se, 'T1w')
+                    out_sp = task_out;  warp_sp = do_mni;
                 else
-                    con_files = dir(fullfile(task_out, 'con_*.nii'));
-                    warp_cons_to_mni(t1_gz, {con_files.name}, task_out, ...
-                                     mni_ref, spm_dir, workdir);
+                    % MNI: own subfolder only when T1w is also run (avoid clobber)
+                    if numel(space_list) > 1
+                        out_sp = fullfile(task_out, 'mni');
+                    else
+                        out_sp = task_out;
+                    end
+                    warp_sp = false;
                 end
+                % Effective smoothing — brainstem override folds in Part A
+                if restrict_bs && ~isempty(bs_fwhm)
+                    if isscalar(bs_fwhm), eff_fwhm = [bs_fwhm bs_fwhm bs_fwhm];
+                    else,                 eff_fwhm = bs_fwhm; end
+                    eff_prefix = sprintf('s%gbs', round(eff_fwhm(1)));
+                else
+                    eff_fwhm = smooth_fwhm;  eff_prefix = smooth_prefix;
+                end
+                run_one_glm(se, out_sp, warp_sp, subj, ses, task, run, func_dir, ...
+                    fmriprep_dir, eff_fwhm, eff_prefix, TR, stim_dir, ...
+                    motion_dir, mni_ref, spm_dir, brainstem_mask, restrict_bs);
             end
         end
         fprintf('DONE subject: %s\n', subj);
@@ -352,6 +231,163 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     fprintf('\n========================================\n');
     fprintf(' ALL DONE. Outputs in: %s\n', output_dir);
     fprintf('========================================\n\n');
+end
+
+
+% ── One first-level GLM for one space (T1w or MNI) ────────────────────────────
+
+function run_one_glm(space_entity, out_dir, do_warp, subj, ses, task, run, func_dir, ...
+        fmriprep_dir, smooth_fwhm, smooth_prefix, TR, stim_dir, motion_dir, mni_ref, spm_dir, ...
+        brainstem_mask, restrict_bs)
+    if nargin < 17, brainstem_mask = ''; end
+    if nargin < 18, restrict_bs = false; end
+% Model one acquisition space. If space is MNI the con_*.nii are ALREADY in MNI and
+% are copied to wcon_*.nii (so the step08 group analysis finds them) — no SPM warp.
+% If T1w and do_warp, con_*.nii are warped to MNI via T1 segmentation.
+    is_mni = contains(space_entity, 'MNI');
+    if ~exist(out_dir, 'dir'), mkdir(out_dir); end
+    workdir = fullfile(out_dir, 'work');
+    if ~exist(workdir, 'dir'), mkdir(workdir); end
+
+    % ── Locate (not copy) BOLD + mask for this space ─────────────────────────
+    bold_gz = fullfile(func_dir, sprintf( ...
+        '%s_ses-%s_task-%s_run-%s_space-%s_desc-preproc_bold.nii.gz', ...
+        subj, ses, task, run, space_entity));
+    mask_gz = fullfile(func_dir, sprintf( ...
+        '%s_ses-%s_task-%s_run-%s_space-%s_desc-brain_mask.nii.gz', ...
+        subj, ses, task, run, space_entity));
+    if ~exist(bold_gz, 'file'), warning('Missing BOLD (skip): %s', bold_gz); return; end
+    if ~exist(mask_gz, 'file'), warning('Missing MASK (skip): %s', mask_gz); return; end
+
+    bold_nii = gunzip_to(bold_gz, workdir);
+    mask_nii = gunzip_to(mask_gz, workdir);
+
+    % Reslice mask into BOLD grid (NN, binary)
+    mask_in_bold = fullfile(workdir, ['mb_' basename(mask_nii)]);
+    if ~exist(mask_in_bold, 'file')
+        mask_in_bold = coreg_reslice_mask_to_bold(mask_nii, bold_nii, mask_in_bold);
+    end
+
+    % ── Restrict to brainstem (Task 05 C2): explicit mask = brainstem ∩ brain ──
+    % The brainstem mask must be in the SAME space as this BOLD (use Space='MNI'
+    % with an MNI brainstem mask). spm_imcalc resamples it onto the brain-mask grid.
+    if restrict_bs && ~isempty(brainstem_mask) && exist(brainstem_mask, 'file') == 2
+        bs_in_bold = fullfile(workdir, 'bs_in_bold.nii');
+        spm_imcalc(char(mask_in_bold, brainstem_mask), bs_in_bold, '(i2>0.5)');
+        final_mask = fullfile(workdir, 'mask_brainstem.nii');
+        spm_imcalc(char(mask_in_bold, bs_in_bold), final_mask, '((i1>0.5).*(i2>0.5))');
+        nvox = nnz(spm_read_vols(spm_vol(final_mask)) > 0.5);
+        if nvox < 1
+            warning(['Brainstem ∩ brain mask is EMPTY — likely a space mismatch ' ...
+                     '(brainstem mask must match the modeling space; use Space=MNI). ' ...
+                     'Falling back to the fMRIPrep brain mask.']);
+        else
+            mask_in_bold = final_mask;
+            fprintf('  Restricted to brainstem: %d voxels (brainstem ∩ brain)\n', nvox);
+        end
+    end
+
+    % Smooth (skip if already smoothed)
+    [~, bn, be] = fileparts(bold_nii);
+    smoothed = fullfile(workdir, [smooth_prefix bn be]);
+    if startsWith(basename(bold_nii), smooth_prefix)
+        scans_sm = cellstr(spm_select('expand', bold_nii));
+    else
+        scans_bold = cellstr(spm_select('expand', bold_nii));
+        if ~exist(smoothed, 'file')
+            mb = [];
+            mb{1}.spm.spatial.smooth.data   = scans_bold;
+            mb{1}.spm.spatial.smooth.fwhm   = smooth_fwhm;
+            mb{1}.spm.spatial.smooth.dtype  = 0;
+            mb{1}.spm.spatial.smooth.im     = 0;
+            mb{1}.spm.spatial.smooth.prefix = smooth_prefix;
+            spm_jobman('run', mb);
+        end
+        scans_sm = cellstr(spm_select('expand', smoothed));
+    end
+
+    % ── Stim condition ────────────────────────────────────────────────────────
+    stim_file = fullfile(stim_dir, sprintf( ...
+        '%s_ses-%s_task-%s_run-%s_bold_stim.txt', subj, ses, task, run));
+    if ~exist(stim_file, 'file'), warning('Missing stim (skip): %s', stim_file); return; end
+    S = read_stim_file(stim_file);
+    if isempty(S.onset), warning('No stim onsets in %s (skip)', stim_file); return; end
+
+    cond = struct([]);
+    cond(1).name     = 'Stim';
+    cond(1).onset    = S.onset;
+    cond(1).duration = S.duration;
+    cond(1).tmod     = 0;
+    cond(1).pmod     = struct('name', {}, 'param', {}, 'poly', {});
+    cond(1).orth     = 1;
+
+    % ── Motion nuisance (RETROICOR already removed from the image upstream) ───
+    motion_file = fullfile(motion_dir, sprintf( ...
+        '%s_ses-%s_task-%s_run-%s_motion_regressors.txt', subj, ses, task, run));
+    if ~exist(motion_file, 'file')
+        warning('Missing motion regressors (continuing without): %s', motion_file);
+        motion_file = '';
+    end
+
+    % ── Specify + estimate ────────────────────────────────────────────────────
+    mb = [];
+    mb{1}.spm.stats.fmri_spec.dir = {out_dir};
+    mb{1}.spm.stats.fmri_spec.timing.units  = 'secs';
+    mb{1}.spm.stats.fmri_spec.timing.RT     = TR;
+    mb{1}.spm.stats.fmri_spec.timing.fmri_t = 16;
+    mb{1}.spm.stats.fmri_spec.timing.fmri_t0 = 8;
+    mb{1}.spm.stats.fmri_spec.sess(1).scans = scans_sm;
+    mb{1}.spm.stats.fmri_spec.sess(1).cond  = cond;
+    mb{1}.spm.stats.fmri_spec.sess(1).multi = {''};
+    mb{1}.spm.stats.fmri_spec.sess(1).regress = struct('name', {}, 'val', {});
+    mb{1}.spm.stats.fmri_spec.sess(1).multi_reg = { iff(~isempty(motion_file), motion_file, '') };
+    mb{1}.spm.stats.fmri_spec.sess(1).hpf = 128;
+    mb{1}.spm.stats.fmri_spec.bases.hrf.derivs = [0 0];
+    mb{1}.spm.stats.fmri_spec.volt    = 1;
+    mb{1}.spm.stats.fmri_spec.global  = 'None';
+    mb{1}.spm.stats.fmri_spec.mask    = {mask_in_bold};
+    mb{1}.spm.stats.fmri_spec.mthresh = 0;
+    mb{1}.spm.stats.fmri_spec.cvi     = 'AR(1)';
+    spm_jobman('run', mb);
+
+    spm_mat = fullfile(out_dir, 'SPM.mat');
+    mb = [];
+    mb{1}.spm.stats.fmri_est.spmmat = {spm_mat};
+    mb{1}.spm.stats.fmri_est.write_residuals = 0;
+    mb{1}.spm.stats.fmri_est.method.Classical = 1;
+    spm_jobman('run', mb);
+
+    % ── Contrasts ──────────────────────────────────────────────────────────────
+    mb = [];
+    mb{1}.spm.stats.con.spmmat = {spm_mat};
+    mb{1}.spm.stats.con.delete = 1;
+    mb{1}.spm.stats.con.consess{1}.tcon.name    = 'Stim > baseline';
+    mb{1}.spm.stats.con.consess{1}.tcon.weights = 1;
+    mb{1}.spm.stats.con.consess{1}.tcon.sessrep = 'none';
+    mb{1}.spm.stats.con.consess{2}.tcon.name    = 'Stim < baseline';
+    mb{1}.spm.stats.con.consess{2}.tcon.weights = -1;
+    mb{1}.spm.stats.con.consess{2}.tcon.sessrep = 'none';
+    spm_jobman('run', mb);
+    fprintf('First-level done: %s | %s | space-%s\n', subj, task, space_entity);
+
+    % ── MNI handling ────────────────────────────────────────────────────────────
+    if is_mni
+        % con already in MNI → copy to wcon_*.nii for the group step (no warp)
+        cons = dir(fullfile(out_dir, 'con_*.nii'));
+        for c = 1:numel(cons)
+            copyfile(fullfile(out_dir, cons(c).name), ...
+                     fullfile(out_dir, ['w' cons(c).name]));
+        end
+        fprintf('  MNI-space con copied to wcon_*.nii (%d) — no warp needed\n', numel(cons));
+    elseif do_warp
+        t1_gz = find_t1w(fmriprep_dir, subj, ses);
+        if isempty(t1_gz)
+            warning('No T1w for MNI warp (skip warp): %s', subj);
+        else
+            con_files = dir(fullfile(out_dir, 'con_*.nii'));
+            warp_cons_to_mni(t1_gz, {con_files.name}, out_dir, mni_ref, spm_dir, workdir);
+        end
+    end
 end
 
 

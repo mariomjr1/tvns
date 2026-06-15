@@ -30,7 +30,8 @@ function secondlevel_populate_tasks(firstlevel_root, output_dir, varargin)
     p = inputParser();
     addRequired(p, 'firstlevel_root');
     addRequired(p, 'output_dir');
-    addParameter(p, 'Tasks',   {'BlockStim','ContinuousStim','rest'}, @iscell);
+    % 'rest' excluded by default — resting baseline, no Stim contrast (Task 10).
+    addParameter(p, 'Tasks',   {'BlockStim','ContinuousStim'}, @iscell);
     addParameter(p, 'ConName', 'wcon_0001.nii', @(x) ischar(x)||isstring(x));
     parse(p, firstlevel_root, output_dir, varargin{:});
 

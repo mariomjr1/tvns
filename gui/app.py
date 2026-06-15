@@ -21,6 +21,7 @@ from tkinter import filedialog, messagebox, ttk
 SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(SCRIPTS_ROOT))          # so QCPanel can import utility.qc_snapshots
 from runner import ScriptRunner
 
 # ── Defaults extracted from the existing shell scripts ────────────────────────
@@ -31,7 +32,9 @@ _DEFAULTS = {
     "sourcedata":   "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata",
     "heuristic":    str(SCRIPTS_ROOT / "utility" / "heuristic.py"),
     "env_activate": "/autofs/cluster/vagabond/USERS/MARIO/Packages/env/heudiconv/bin/activate",
-    "subjlist":     str(SCRIPTS_ROOT / "utility" / "SubjectList.txt"),
+    # Subject lists live in the project's codes/ folder (temporary working lists)
+    "subjlist":      "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/codes/SubjectList.txt",
+    "subjlist_bids": "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/codes/SubjectListBIDS.txt",
     # ── Common tool paths, shared by every step (set once in Setup) ───────────
     "fmriprep":     "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata/derivatives/fmriprep",
     "spm_dir":      "/autofs/cluster/vagabond/USERS/MARIO/Packages/matlab/spm12",
@@ -41,6 +44,9 @@ _DEFAULTS = {
     "python_exe":   sys.executable,
     "retro_code":   str(SCRIPTS_ROOT / "utility" / "retroicor"),
     "rdeco_code":   str(SCRIPTS_ROOT / "utility" / "r-deco-master"),
+    # Brainstem mask (Task 05) — binary mask built by the Brainstem Mask tool;
+    # shared so steps 07/08/09/10 can restrict the analysis to the brainstem.
+    "brainstem_mask": "",
 }
 
 
@@ -178,7 +184,7 @@ class PipelineState:
         ("step_00",  "00"),
         ("step_01",  "01 BIDS"),
         ("bids_val", "BIDS Val"),
-        ("step_02",  "fMRIPrep"),
+        ("step_05",  "05 fMRIPrep"),
         ("fd_qc",    "FD QC"),
     ]
 
@@ -231,11 +237,12 @@ class PipelineState:
 
 # ── FD / registration QC (called post-fMRIPrep) ────────────────────────────────
 
-def _run_fd_qc(derivatives_dir: str, subjects: list, threshold: float = 0.9) -> dict:
+def _run_fd_qc(derivatives_dir: str, subjects: list, threshold: float = 0.9,
+               session: str = "01") -> dict:
     """Parse fMRIPrep confounds TSVs; return {subj: {mean_fd, flagged, has_output}}."""
     results = {}
     for subj in subjects:
-        func_dir = Path(derivatives_dir) / subj / "func"
+        func_dir = Path(derivatives_dir) / subj / f"ses-{session}" / "func"
         if not func_dir.is_dir():
             results[subj] = {"has_output": False, "mean_fd": None, "flagged": False}
             continue
@@ -377,6 +384,7 @@ class SubjectListEditor(ttk.Frame):
                 return
             self._path_var.set(path)
         subjects = self.get_subjects()
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with open(path, "w") as f:
             for s in subjects:
                 f.write(s + "\n")
@@ -522,7 +530,7 @@ echo "Step 00 finished."
 """
 
 
-class Step00Panel(ttk.Frame):
+class DownloadPanel(ttk.Frame):
     """Download raw DICOMs via findsession + rsync (sequential, output in console)."""
 
     def __init__(self, parent, cfg: dict, console: Console,
@@ -1013,7 +1021,7 @@ class _PassPanel(ttk.Frame):
 
 # ── Step 01 Panel ──────────────────────────────────────────────────────────────
 
-class Step01Panel(ttk.Frame):
+class BidsPanel(ttk.Frame):
     """Inner notebook: Pass 1 | Sequences | Pass 2 | BIDS Validator."""
 
     def __init__(self, parent, cfg: dict, console: Console,
@@ -1173,7 +1181,7 @@ class _BIDSValidatorTab(ttk.Frame):
             self._state.update_many(subjects, "bids_val", bids_status, note)
 
 
-# ── Step 02 — BIDS Subject List tab (step03 logic) ────────────────────────────
+# ── BIDS Subject List tab — emits SubjectListBIDS.txt (a step 01 artifact) ────
 
 class _BIDSListTab(ttk.Frame):
     """Convert SubjectList.txt entries to BIDS IDs and write SubjectListBIDS.txt."""
@@ -1255,15 +1263,16 @@ class _BIDSListTab(ttk.Frame):
         if not out_path:
             messagebox.showerror("Error", "Set the output file path first.")
             return
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
         with open(out_path, "w") as f:
             for raw in subjects:
                 f.write(self._to_bids(raw) + "\n")
-        self._console.append(f"[Step 02] BIDS list saved: {out_path}", "ok")
+        self._console.append(f"[BIDS list] saved: {out_path}", "ok")
         self._status.set(f"BIDS list saved → {Path(out_path).name}")
         messagebox.showinfo("Saved", f"Saved:\n{out_path}")
 
 
-# ── Step 02 — BIDS conversion sub-tab (calls step01_create_bids_v2.sh) ────────
+# ── Step 01 — BIDS conversion sub-tab (calls step01_create_bids_v2.sh) ────────
 
 class _BIDSConvTab(ttk.Frame):
     """Run step01_create_bids_v2.sh directly (heudiconv two-pass BIDS conversion)."""
@@ -1400,13 +1409,17 @@ class _BIDSConvTab(ttk.Frame):
                 self._state.update_many(self._last_subjects, "step_01", "failed")
 
 
-# ── Step 02 — fMRIPrep sub-tab (local, via ScriptRunner) ──────────────────────
+# ── Step 05 — fMRIPrep sub-tab (local, via ScriptRunner; on RETROICOR-corrected) ──
 
 class _FmriprepTab(ttk.Frame):
     """Run fMRIPrep locally via Singularity, one subject at a time."""
 
+    # NEW ORDER (RETROICOR → fMRIPrep): fMRIPrep ingests the RETROICOR-corrected
+    # BIDS (sourcedata_retrocorr), but writes derivatives under the RAW sourcedata
+    # so downstream paths are unchanged.
     _DEFAULTS_FP = {
-        "bids_dir":   "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata",
+        "raw_bids":   "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata",
+        "bids_dir":   "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata_retrocorr",
         "fp_der":     "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata/derivatives/fmriprep",
         "fs_dir":     "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata/derivatives/freesurfer",
         "work_dir":   "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/codes/working-fmriprep",
@@ -1417,15 +1430,18 @@ class _FmriprepTab(ttk.Frame):
     def __init__(self, parent, console: Console, status_var: tk.StringVar,
                  runner: ScriptRunner, fp_env_var: tk.StringVar,
                  fp_subj_var: tk.StringVar,
+                 python_exe_var: "tk.StringVar | None" = None,
                  state: "PipelineState | None" = None, **kwargs):
         super().__init__(parent, padding=14, **kwargs)
-        self._console    = console
-        self._status     = status_var
-        self._runner     = runner
-        self._fp_env_var = fp_env_var
-        self._fp_subj    = fp_subj_var
-        self._state      = state
+        self._console        = console
+        self._status         = status_var
+        self._runner         = runner
+        self._fp_env_var     = fp_env_var
+        self._fp_subj        = fp_subj_var
+        self._python_exe_var  = python_exe_var
+        self._state           = state
         self._last_subjects: list = []
+        self._tmp_subj_file: "str | None" = None
         self._vars       = {k: tk.StringVar(value=v) for k, v in self._DEFAULTS_FP.items()}
 
         ttk.Label(self, text="fMRIPrep",
@@ -1439,7 +1455,8 @@ class _FmriprepTab(ttk.Frame):
         paths_frame = ttk.LabelFrame(self, text="Paths", padding=(10, 6))
         paths_frame.pack(fill="x", pady=(0, 8))
         for label, key, mode, filetypes in [
-            ("BIDS dir:",         "bids_dir",  "dir",  None),
+            ("Raw BIDS (source):", "raw_bids", "dir",  None),
+            ("Corrected BIDS:",   "bids_dir",  "dir",  None),
             ("Derivatives dir:",  "fp_der",    "dir",  None),
             ("FreeSurfer dir:",   "fs_dir",    "dir",  None),
             ("Working dir:",      "work_dir",  "dir",  None),
@@ -1475,12 +1492,17 @@ class _FmriprepTab(ttk.Frame):
 
         chk_row = ttk.Frame(opts_frame)
         chk_row.pack(fill="x", pady=2)
-        self._ignore_st = tk.BooleanVar(value=True)
+        # STC is now ON by default: fMRIPrep does neural slice-timing correction on the
+        # RETROICOR-corrected data (RETROICOR used slice timing for physio phase upstream).
+        self._ignore_st = tk.BooleanVar(value=False)
         self._skip_bids = tk.BooleanVar(value=True)
         self._cifti     = tk.BooleanVar(value=True)
+        self._assemble  = tk.BooleanVar(value=True)
         ttk.Checkbutton(chk_row, text="--ignore slicetiming",   variable=self._ignore_st).pack(side="left", padx=(0, 12))
         ttk.Checkbutton(chk_row, text="--skip-bids-validation", variable=self._skip_bids).pack(side="left", padx=(0, 12))
         ttk.Checkbutton(chk_row, text="--cifti-output",         variable=self._cifti).pack(side="left")
+        ttk.Checkbutton(opts_frame, text="Assemble RETROICOR-corrected BIDS first (from step04 output)",
+                        variable=self._assemble).pack(anchor="w", pady=(4, 0))
 
         sel_frame = ttk.LabelFrame(self, text="Subject selection", padding=(8, 4))
         sel_frame.pack(fill="x", pady=(0, 8))
@@ -1521,6 +1543,7 @@ class _FmriprepTab(ttk.Frame):
             messagebox.showerror("Error", "No subjects. Generate the BIDS list first.")
             return
 
+        raw_bids = self._vars["raw_bids"].get()
         bids_dir = self._vars["bids_dir"].get()
         fp_der   = self._vars["fp_der"].get()
         fs_dir   = self._vars["fs_dir"].get()
@@ -1528,49 +1551,53 @@ class _FmriprepTab(ttk.Frame):
         simg     = self._vars["simg"].get()
         fs_lic   = self._vars["fs_license"].get()
         fp_env   = self._fp_env_var.get()
-        spaces   = self._spaces_var.get()
+        spaces   = self._spaces_var.get() or "T1w MNI152NLin2009cAsym"
         mem      = self._mem_var.get() or "50000"
+        python_exe = (self._python_exe_var.get() if self._python_exe_var else None) or "python3"
 
-        opt_flags = []
-        if self._ignore_st.get(): opt_flags.append("--ignore slicetiming")
-        if self._skip_bids.get(): opt_flags.append("--skip-bids-validation")
-        if self._cifti.get():     opt_flags.append("--cifti-output")
-        opt_str = (" \\\n    " + " \\\n    ".join(opt_flags)) if opt_flags else ""
+        # Build subject list file: use the file directly if we read from it;
+        # write a temp file when running a single specific subject.
+        self._tmp_subj_file = None
+        if self._sel_mode.get() == "specific":
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", prefix="step05_subj_", delete=False)
+            tmp.write("\n".join(subjects) + "\n")
+            tmp.close()
+            self._tmp_subj_file = tmp.name
+            subj_list_path = tmp.name
+        else:
+            subj_list_path = self._fp_subj.get().strip()
 
-        parts = []
-        for subj in subjects:
-            parts.append(
-                f"echo '=== {subj} ==='\n"
-                f"singularity run --cleanenv \\\n"
-                f"    -B /autofs -B /usr/pubsw \\\n"
-                f"    -B /cluster -B /homes -B /space -B /vast -B /run/user \\\n"
-                f"    '{simg}' \\\n"
-                f"    '{bids_dir}' '{fp_der}' participant \\\n"
-                f"    --participant-label {subj} \\\n"
-                f"    --output-spaces {spaces} \\\n"
-                f"    --fs-subjects-dir '{fs_dir}' \\\n"
-                f"    --work-dir '{work_dir}' \\\n"
-                f"    --fs-license-file '{fs_lic}' \\\n"
-                f"    --mem_mb {mem}{opt_str} \\\n"
-                f"    && echo '✓ Done: {subj}' || echo '✗ Failed: {subj}'"
-            )
+        # Optional fMRIPrep flags
+        extra_flags = []
+        if self._ignore_st.get(): extra_flags.append("--ignore slicetiming")
+        if self._skip_bids.get(): extra_flags.append("--skip-bids-validation")
+        if self._cifti.get():     extra_flags.append("--cifti-output")
+        if not self._assemble.get(): extra_flags.append("--no-assemble")
 
-        prefix = f"source '{fp_env}'\n" if fp_env and os.path.isfile(fp_env) else ""
-        cmd = ["bash", "-c", prefix + "\n\n".join(parts)]
+        script = str(SCRIPTS_ROOT / "step05_fmriprep_v2.sh")
+        cmd = (
+            ["bash", script,
+             subj_list_path, raw_bids, bids_dir, fp_der,
+             fs_dir, work_dir, simg, fs_lic,
+             python_exe, spaces, mem, fp_env or ""]
+            + extra_flags
+        )
 
         self._last_subjects = subjects
         if self._state:
-            self._state.update_many(subjects, "step_02", "running")
+            self._state.update_many(subjects, "step_05", "running")
 
         self._console.separator()
         self._console.append(
-            f"[Step 02]  fMRIPrep — {len(subjects)} subject(s): {', '.join(subjects)}", "info")
+            f"[Step 05]  fMRIPrep (on RETROICOR-corrected) — {len(subjects)} subject(s): "
+            f"{', '.join(subjects)}", "info")
         self._console.separator()
 
         self._run_btn.config(state="disabled")
         self._stop_btn.config(state="normal")
         self._progress.start(10)
-        self._status.set("Step 02 (fMRIPrep) running…")
+        self._status.set("Step 05 (fMRIPrep) running…")
 
         self._runner.run(
             cmd=cmd, cwd=bids_dir or "/tmp",
@@ -1582,17 +1609,23 @@ class _FmriprepTab(ttk.Frame):
         self._progress.stop()
         self._run_btn.config(state="normal")
         self._stop_btn.config(state="disabled")
+        if getattr(self, "_tmp_subj_file", None):
+            try:
+                os.unlink(self._tmp_subj_file)
+            except OSError:
+                pass
+            self._tmp_subj_file = None
         if rc == 0:
-            self._status.set("Step 02 (fMRIPrep) complete ✓")
-            self._console.append("[Step 02] fMRIPrep finished.", "ok")
+            self._status.set("Step 05 (fMRIPrep) complete ✓")
+            self._console.append("[Step 05] fMRIPrep finished.", "ok")
             if self._state:
-                self._state.update_many(self._last_subjects, "step_02", "done")
+                self._state.update_many(self._last_subjects, "step_05", "done")
             self._run_qc()
         else:
-            self._status.set(f"Step 02 (fMRIPrep) failed (exit {rc})")
-            self._console.append(f"[Step 02] fMRIPrep failed (exit {rc}).", "error")
+            self._status.set(f"Step 05 (fMRIPrep) failed (exit {rc})")
+            self._console.append(f"[Step 05] fMRIPrep failed (exit {rc}).", "error")
             if self._state:
-                self._state.update_many(self._last_subjects, "step_02", "failed")
+                self._state.update_many(self._last_subjects, "step_05", "failed")
 
     def _stop(self):
         """Stop the currently running process."""
@@ -1631,7 +1664,7 @@ class _FmriprepTab(ttk.Frame):
                 self._state.update(subj, "fd_qc", "flagged" if flag else "done", note)
 
 
-# ── Step 13 QC tab (pre vs post RETROICOR GIF) ────────────────────────────────
+# ── fMRIPrep pre/post QC GIF tab (optional; compares fMRIPrep input vs output) ─
 
 class _Step13QCTab(ttk.Frame):
     """Run step13 to generate a pre/post GIF for any two matched 4D BOLDs."""
@@ -1767,9 +1800,9 @@ class _Step13QCTab(ttk.Frame):
             self._console.append(f"[Step 13] Failed (exit {rc}).", "error")
 
 
-# ── Step 02 Panel ──────────────────────────────────────────────────────────────
+# ── Step 05 Panel — fMRIPrep (runs after RETROICOR, on the corrected BOLD) ──────
 
-class Step02Panel(ttk.Frame):
+class FmriprepPanel(ttk.Frame):
     """Inner notebook: Generate BIDS List | fMRIPrep | Pre/Post QC (optional)."""
 
     def __init__(self, parent, cfg: dict, console: Console,
@@ -1777,17 +1810,18 @@ class Step02Panel(ttk.Frame):
                  state: "PipelineState | None" = None, **kwargs):
         super().__init__(parent, padding=(6, 6), **kwargs)
 
-        fp_subj_var = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "SubjectListBIDS.txt"))
+        fp_subj_var = cfg["subjlist_bids"]
         fp_env_var  = cfg["env_script"]
 
-        ttk.Label(self, text="Step 02 — fMRIPrep",
+        ttk.Label(self, text="Step 05 — fMRIPrep (on RETROICOR-corrected BOLD)",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
 
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True)
 
         bids_list_tab = _BIDSListTab(nb, cfg, console, status_var, fp_subj_var)
-        fp_tab        = _FmriprepTab(nb, console, status_var, runner, fp_env_var, fp_subj_var, state=state)
+        fp_tab        = _FmriprepTab(nb, console, status_var, runner, fp_env_var, fp_subj_var,
+                                     python_exe_var=cfg["python_exe"], state=state)
         qc_tab        = _Step13QCTab(nb, cfg, console, status_var, runner)
 
         nb.add(bids_list_tab, text="  Generate BIDS List  ")
@@ -2242,6 +2276,348 @@ class HeuristicPanel(ttk.Frame):
         self._active_lbl.config(text=Path(p).name if p else "(none)")
 
 
+# ── QC Panel ────────────────────────────────────────────────────────────────────
+
+class QCPanel(ttk.Frame):
+    """Pipeline QC snapshot generator.
+
+    For every pipeline step that produces or transforms a subject image, generates:
+      - A mid-brain 3-plane montage (axial / coronal / sagittal) saved to
+        <project>/codes/qc/<subject>/NN_<step>_<subject>.png
+      - A combined pipeline strip  <project>/codes/qc/<subject>/00_pipeline_montage_<subject>.png
+      - A JSON manifest at <project>/codes/qc/qc_manifest.json
+
+    The panel can target a single subject (selected from SubjectListBIDS.txt) or
+    run a "check" sweep over all subjects.
+    """
+
+    # Path to the QC engine script (sibling of heuristic.py in utility/)
+    _QC_SCRIPT = SCRIPTS_ROOT / "utility" / "qc_snapshots.py"
+
+    def __init__(self, parent, cfg: dict, console: Console,
+                 status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
+        super().__init__(parent, padding=12, **kwargs)
+        self._cfg     = cfg
+        self._console = console
+        self._status  = status_var
+        self._runner  = runner
+
+        ttk.Label(self, text="Pipeline QC Snapshots",
+                  font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            self,
+            text=(
+                "Generates mid-brain axial/coronal/sagittal montages for every pipeline step "
+                "that produces or transforms a subject image.  Results land in "
+                "<project>/codes/qc/<subject>/.  A combined pipeline strip and a JSON manifest "
+                "are also written.  Choose a single subject or 'Check all' to sweep every entry "
+                "in SubjectListBIDS.txt."
+            ),
+            foreground="gray", wraplength=660,
+        ).pack(anchor="w", pady=(0, 10))
+
+        # ── Paths summary ──────────────────────────────────────────────────────
+        path_frame = ttk.LabelFrame(self, text="Active paths (from Setup)", padding=(8, 4))
+        path_frame.pack(fill="x", pady=(0, 8))
+        self._lbl_sd   = ttk.Label(path_frame, foreground="#ff4444")
+        self._lbl_pr   = ttk.Label(path_frame, foreground="#ff4444")
+        self._lbl_out  = ttk.Label(path_frame, foreground="#4ec9b0")
+        self._lbl_sd.pack(anchor="w")
+        self._lbl_pr.pack(anchor="w")
+        self._lbl_out.pack(anchor="w")
+        for key in ("sourcedata", "project_root"):
+            cfg[key].trace_add("write", lambda *_: self._update_labels())
+        self._update_labels()
+
+        # ── Subject selection ──────────────────────────────────────────────────
+        sel_frame = ttk.LabelFrame(self, text="Subject selection", padding=(8, 4))
+        sel_frame.pack(fill="x", pady=(0, 8))
+
+        self._sel_mode = tk.StringVar(value="specific")
+        ttk.Radiobutton(sel_frame, text="Check ALL subjects (SubjectListBIDS.txt)",
+                        variable=self._sel_mode, value="all",
+                        command=self._on_mode_change).pack(anchor="w")
+
+        sp_row = ttk.Frame(sel_frame)
+        sp_row.pack(anchor="w", fill="x", pady=(4, 0))
+        ttk.Radiobutton(sp_row, text="Single subject:",
+                        variable=self._sel_mode, value="specific",
+                        command=self._on_mode_change).pack(side="left")
+        self._subj_var = tk.StringVar()
+        self._subj_combo = ttk.Combobox(sp_row, textvariable=self._subj_var,
+                                        width=36, state="readonly")
+        self._subj_combo.pack(side="left", padx=(6, 4))
+        ttk.Button(sp_row, text="↻ Scan", command=self._scan_subjects).pack(side="left")
+
+        ttk.Label(sel_frame,
+                  text="(BIDS IDs scanned from sourcedata; or type a subject ID directly)",
+                  foreground="gray").pack(anchor="w", pady=(4, 0))
+
+        # ── Steps info ────────────────────────────────────────────────────────
+        info_frame = ttk.LabelFrame(self, text="QC steps covered", padding=(8, 4))
+        info_frame.pack(fill="x", pady=(0, 8))
+        try:
+            import importlib.util as _ilu
+            _spec = _ilu.spec_from_file_location(
+                "qc_snapshots", str(self._QC_SCRIPT))
+            _qcmod = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_qcmod)
+            _steps = _qcmod.STEPS
+        except Exception:
+            _steps = []
+        if _steps:
+            for _num, _name, _desc in _steps:
+                ttk.Label(info_frame,
+                          text=f"  {_num}  {_desc}",
+                          foreground="#9cdcfe").pack(anchor="w")
+        else:
+            ttk.Label(info_frame,
+                      text="(could not load step list — qc_snapshots.py not found)",
+                      foreground="gray").pack(anchor="w")
+
+        # ── Manifest viewer ───────────────────────────────────────────────────
+        mf = ttk.LabelFrame(self, text="QC manifest  (qc_manifest.json)", padding=(8, 4))
+        mf.pack(fill="x", pady=(0, 8))
+        mf_row = ttk.Frame(mf); mf_row.pack(fill="x")
+        self._manifest_lbl = ttk.Label(mf_row, foreground="#6a6a6a",
+                                       text="(not yet generated)")
+        self._manifest_lbl.pack(side="left", fill="x", expand=True)
+        ttk.Button(mf_row, text="↻ Refresh status",
+                   command=self._refresh_manifest).pack(side="right")
+
+        # Treeview showing per-subject step status
+        tv_frame = ttk.Frame(self)
+        tv_frame.pack(fill="both", expand=True, pady=(0, 8))
+        cols = ("subject", "steps_done", "steps_missing", "montage", "last_run")
+        self._tv = ttk.Treeview(tv_frame, columns=cols, show="headings", height=8)
+        self._tv.heading("subject",       text="Subject")
+        self._tv.heading("steps_done",    text="Done")
+        self._tv.heading("steps_missing", text="Missing")
+        self._tv.heading("montage",       text="Montage")
+        self._tv.heading("last_run",      text="Last run")
+        self._tv.column("subject",       width=240, stretch=True)
+        self._tv.column("steps_done",    width=55,  anchor="center")
+        self._tv.column("steps_missing", width=65,  anchor="center")
+        self._tv.column("montage",       width=65,  anchor="center")
+        self._tv.column("last_run",      width=160)
+        self._tv.tag_configure("done",    foreground="#4ec9b0")
+        self._tv.tag_configure("partial", foreground="#dcdcaa")
+        self._tv.tag_configure("empty",   foreground="#f44747")
+        vsb = ttk.Scrollbar(tv_frame, orient="vertical", command=self._tv.yview)
+        self._tv.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self._tv.pack(side="left", fill="both", expand=True)
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        ttk.Separator(self).pack(fill="x", pady=6)
+
+        btn_row = ttk.Frame(self)
+        btn_row.pack(anchor="w")
+        self._run_btn = ttk.Button(btn_row, text="▶  Generate QC snapshots",
+                                   command=self._run)
+        self._run_btn.pack(side="left")
+        self._stop_btn = ttk.Button(btn_row, text="⏹ Stop", command=self._stop,
+                                    state="disabled")
+        self._stop_btn.pack(side="left", padx=4)
+        self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=200)
+        self._progress.pack(side="left", padx=12)
+
+        # Open output folder
+        ttk.Button(btn_row, text="Open QC folder",
+                   command=self._open_folder).pack(side="left", padx=(16, 0))
+
+        # Initial scan
+        self._scan_subjects()
+        self._refresh_manifest()
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _project_root(self) -> str:
+        pr = self._cfg.get("project_root", tk.StringVar()).get().strip()
+        if pr:
+            return pr
+        # Fallback: derive from sourcedata parent
+        sd = self._cfg["sourcedata"].get().strip()
+        if sd:
+            return str(Path(sd).parent)
+        return ""
+
+    def _qc_dir(self) -> Path | None:
+        pr = self._project_root()
+        if pr:
+            return Path(pr) / "codes" / "qc"
+        return None
+
+    def _update_labels(self):
+        sd = self._cfg["sourcedata"].get() or "(not set)"
+        pr = self._project_root() or "(not set)"
+        qd = str(self._qc_dir() or "(not set)")
+        self._lbl_sd.config(text=f"sourcedata:    {sd}")
+        self._lbl_pr.config(text=f"project root:  {pr}")
+        self._lbl_out.config(text=f"QC output dir: {qd}")
+
+    def _scan_subjects(self):
+        """Populate the subject combobox from sourcedata BIDS subjects."""
+        sd = self._cfg["sourcedata"].get().strip()
+        subjects = []
+        if sd and os.path.isdir(sd):
+            subjects = sorted(
+                d.name for d in Path(sd).iterdir()
+                if d.is_dir() and d.name.startswith("sub-")
+            )
+        # Also try SubjectListBIDS.txt
+        if not subjects:
+            p = self._cfg.get("subjlist_bids", tk.StringVar()).get().strip()
+            if p and os.path.isfile(p):
+                with open(p) as f:
+                    subjects = [ln.strip() for ln in f if ln.strip()]
+        self._subj_combo["values"] = subjects
+        if subjects and not self._subj_var.get():
+            self._subj_var.set(subjects[0])
+
+    def _on_mode_change(self):
+        state = "readonly" if self._sel_mode.get() == "specific" else "disabled"
+        self._subj_combo.config(state=state)
+
+    def _refresh_manifest(self):
+        """Load qc_manifest.json and populate the status treeview."""
+        self._tv.delete(*self._tv.get_children())
+        qd = self._qc_dir()
+        if qd is None:
+            self._manifest_lbl.config(text="(project root not set)")
+            return
+        mpath = qd / "qc_manifest.json"
+        self._manifest_lbl.config(text=str(mpath) if mpath.exists() else "(not yet generated)")
+        if not mpath.is_file():
+            return
+        try:
+            with open(mpath) as f:
+                manifest = json.load(f)
+        except Exception:
+            return
+        for subj, rec in sorted(manifest.items()):
+            steps = rec.get("steps", {})
+            done    = sum(1 for s in steps.values() if s.get("status") == "done")
+            missing = sum(1 for s in steps.values() if s.get("status") == "missing")
+            mont    = rec.get("pipeline_montage", {}).get("status", "?")
+            ts      = rec.get("generated", "")[:16]
+            total   = len(steps)
+            if done == total and total > 0:
+                tag = "done"
+            elif done == 0:
+                tag = "empty"
+            else:
+                tag = "partial"
+            self._tv.insert("", "end", values=(
+                subj,
+                f"{done}/{total}",
+                str(missing),
+                "✓" if mont == "done" else "·",
+                ts,
+            ), tags=(tag,))
+
+    def _subjects_to_run(self) -> list:
+        """Return the list of BIDS subject IDs to process."""
+        if self._sel_mode.get() == "all":
+            # Try SubjectListBIDS.txt first
+            p = self._cfg.get("subjlist_bids", tk.StringVar()).get().strip()
+            if p and os.path.isfile(p):
+                with open(p) as f:
+                    return [ln.strip() for ln in f if ln.strip()]
+            # Fall back to scanning sourcedata
+            sd = self._cfg["sourcedata"].get().strip()
+            if sd and os.path.isdir(sd):
+                return sorted(
+                    d.name for d in Path(sd).iterdir()
+                    if d.is_dir() and d.name.startswith("sub-")
+                )
+            return []
+        else:
+            s = self._subj_var.get().strip()
+            return [s] if s else []
+
+    def _run(self):
+        if not self._QC_SCRIPT.is_file():
+            messagebox.showerror(
+                "Error",
+                f"QC script not found:\n{self._QC_SCRIPT}")
+            return
+
+        sourcedata = self._cfg["sourcedata"].get().strip()
+        if not sourcedata or not os.path.isdir(sourcedata):
+            messagebox.showerror("Error", "Set the sourcedata path in Setup.")
+            return
+
+        pr = self._project_root()
+        if not pr:
+            messagebox.showerror("Error",
+                "Could not determine the project root. "
+                "Set the project folder in the sidebar.")
+            return
+
+        subjects = self._subjects_to_run()
+        if not subjects:
+            messagebox.showerror("Error",
+                "No subjects found. Check SubjectListBIDS.txt or scan sourcedata.")
+            return
+
+        python = sys.executable
+
+        # Build command: one invocation with all subject IDs
+        cmd = [python, str(self._QC_SCRIPT), pr, sourcedata] + subjects
+
+        self._console.separator()
+        mode = "all subjects" if self._sel_mode.get() == "all" else subjects[0]
+        self._console.append(
+            f"[QC] Generating snapshots for: {mode}  ({len(subjects)} subject(s))",
+            "info")
+        self._console.separator()
+
+        self._run_btn.config(state="disabled")
+        self._stop_btn.config(state="normal")
+        self._progress.start(10)
+        self._status.set("QC snapshot generation running…")
+
+        self._runner.run(
+            cmd=cmd,
+            cwd=pr,
+            on_line=self._on_line,
+            on_done=self._done,
+        )
+
+    def _on_line(self, line: str):
+        self._console.append(line)
+
+    def _done(self, rc: int):
+        self._progress.stop()
+        self._run_btn.config(state="normal")
+        self._stop_btn.config(state="disabled")
+        if rc == 0:
+            self._status.set("QC snapshots generated ✓")
+            self._console.append("[QC] Finished successfully.", "ok")
+        else:
+            self._status.set(f"QC generation failed (exit {rc})")
+            self._console.append(f"[QC] Failed (exit {rc}).", "error")
+        # Refresh the manifest table regardless
+        self._refresh_manifest()
+
+    def _stop(self):
+        self._runner.stop()
+
+    def _open_folder(self):
+        qd = self._qc_dir()
+        if qd is None or not qd.is_dir():
+            messagebox.showinfo("QC folder",
+                f"QC output folder does not exist yet:\n{qd}\n\n"
+                "Run 'Generate QC snapshots' first.")
+            return
+        import subprocess
+        try:
+            subprocess.Popen(["open", str(qd)])
+        except Exception:
+            messagebox.showinfo("QC folder", str(qd))
+
+
 class _PhysioSetupTab(ttk.Frame):
     """Paths, subject, and .mat format selector shared by all physio pipeline steps."""
 
@@ -2444,7 +2820,7 @@ class _PhysioStepTab(ttk.Frame):
         self._console.append(f"[Physio Step {self._step_num}] {msg}", tag)
 
 
-class PhysioPanel(ttk.Frame):
+class PhysioparsePanel(ttk.Frame):
     """Run the physioparse pipeline (steps 1-4) for a single tVNS subject."""
 
     def __init__(self, parent, cfg: dict, console: Console,
@@ -2461,7 +2837,7 @@ class PhysioPanel(ttk.Frame):
         self._oldname_var = tk.StringVar()   # .heudiconv folder name (old SubjectList name)
         self._cfg         = cfg
 
-        ttk.Label(self, text="Step 03 — Physioparse",
+        ttk.Label(self, text="Step 02 — Physioparse",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
 
         nb = ttk.Notebook(self)
@@ -2690,7 +3066,7 @@ class PhysioPanel(ttk.Frame):
         return cmd, work
 
 
-# ── Step 04 — Filter physio + R-DECO launcher ─────────────────────────────────
+# ── Step 03 — Filter physio + R-DECO launcher ─────────────────────────────────
 
 class _FilterPhysioTab(ttk.Frame):
     """Run preproc_filter_per_sequence.m on physioparse parsed mats."""
@@ -2829,12 +3205,12 @@ class _FilterPhysioTab(ttk.Frame):
         cmd = [matlab, "-nodisplay", "-nosplash", "-batch", matlab_cmd]
 
         self._console.separator()
-        self._console.append(f"[Step 04] Filter batch — subject: {subj}", "info")
+        self._console.append(f"[Step 03] Filter batch — subject: {subj}", "info")
         self._console.separator()
 
         self._run_btn.config(state="disabled")
         self._progress.start(10)
-        self._status.set("Step 04 filter running…")
+        self._status.set("Step 03 filter running…")
 
         self._runner.run(cmd=cmd, cwd=out if os.path.isdir(out) else "/tmp",
                         on_line=self._console.append, on_done=self._done)
@@ -2843,11 +3219,11 @@ class _FilterPhysioTab(ttk.Frame):
         self._progress.stop()
         self._run_btn.config(state="normal")
         if rc == 0:
-            self._status.set("Step 04 filter complete ✓")
-            self._console.append("[Step 04] Filter batch finished. Open R-DECO tab next.", "ok")
+            self._status.set("Step 03 filter complete ✓")
+            self._console.append("[Step 03] Filter batch finished. Open R-DECO tab next.", "ok")
         else:
-            self._status.set(f"Step 04 filter failed (exit {rc})")
-            self._console.append(f"[Step 04] Filter failed (exit {rc}).", "error")
+            self._status.set(f"Step 03 filter failed (exit {rc})")
+            self._console.append(f"[Step 03] Filter failed (exit {rc}).", "error")
 
 
 class _RDecoTab(ttk.Frame):
@@ -3114,8 +3490,8 @@ class _RDecoTab(ttk.Frame):
         self._refresh()
 
 
-class Step04Panel(ttk.Frame):
-    """Step 04: Filter physio per-sequence mats + R-DECO launcher."""
+class PreprocRdecoPanel(ttk.Frame):
+    """Step 03: Filter physio per-sequence mats + R-DECO launcher."""
 
     def __init__(self, parent, cfg: dict, console: Console,
                  status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
@@ -3124,7 +3500,7 @@ class Step04Panel(ttk.Frame):
         # Shared var: preprocessed dir is set by _FilterPhysioTab and read by _RDecoTab
         preproc_dir_var = tk.StringVar()
 
-        ttk.Label(self, text="Step 04 — Preprocess for RETROICOR",
+        ttk.Label(self, text="Step 03 — Preprocess for RETROICOR",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
 
         nb = ttk.Notebook(self)
@@ -3140,10 +3516,10 @@ class Step04Panel(ttk.Frame):
         nb.bind("<<NotebookTabChanged>>", lambda _: rdeco_tab._refresh())
 
 
-# ── Step 05 — RETROICOR ───────────────────────────────────────────────────────
+# ── Step 04 — RETROICOR (native-space physio correction, before fMRIPrep) ─────
 
-class Step05Panel(ttk.Frame):
-    """Step 05: Generate 1D files + run RETROICOR (full pipeline)."""
+class RetroicorPanel(ttk.Frame):
+    """Step 04: Generate 1D files + run RETROICOR (native-space physio correction)."""
 
     _DEFAULTS = {
         "sourcedata":    "/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata",
@@ -3174,8 +3550,10 @@ class Step05Panel(ttk.Frame):
         self._sms_var     = tk.StringVar(value=self._DEFAULTS["sms"])
         self._fs_var      = tk.StringVar(value=self._DEFAULTS["fs_out"])
         self._tr_var      = tk.StringVar(value=self._DEFAULTS["tr_fallback"])
+        # Cardiac source: "both" (cardiac+resp) or "resp" (respiration-only, bad piezo)
+        self._cardiac_var = tk.StringVar(value="both")
 
-        ttk.Label(self, text="Step 05 — RETROICOR",
+        ttk.Label(self, text="Step 04 — RETROICOR",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
 
         nb = ttk.Notebook(self)
@@ -3210,7 +3588,7 @@ class Step05Panel(ttk.Frame):
             PathRow(parent, label, mode=mode, filetypes=ft or [("All", "*.*")],
                     var=var, label_width=22).pack(fill="x", pady=2)
 
-        prow(tab if False else pf, "Preprocessed dir (step04):", self._preproc_var)
+        prow(tab if False else pf, "Preprocessed dir (step03):", self._preproc_var)
         prow(pf, "Retroicor input dir:",       self._input_var)
         prow(pf, "Retroicor output dir:",      self._output_var)
         prow(pf, "MATLAB exe:",  self._matlab_var, mode="file")
@@ -3257,6 +3635,22 @@ class Step05Panel(ttk.Frame):
         self._subj_var.trace_add("write", lambda *_: self._update_summary())
 
         ttk.Separator(tab).pack(fill="x", pady=8)
+
+        # ── Piezo cardiac quality + cardiac/resp choice ─────────────────────────
+        cq = ttk.LabelFrame(tab, text="Piezo cardiac quality", padding=(10, 6))
+        cq.pack(fill="x", pady=(0, 8))
+        ttk.Label(cq, foreground="gray", wraplength=560,
+                  text=("Bad piezo acquisition → unreliable R-peaks → cardiac RETROICOR "
+                        "injects noise. Run Cardiac QC, then choose how to proceed:")).pack(anchor="w")
+        cqr = ttk.Frame(cq); cqr.pack(fill="x", pady=(4, 2))
+        ttk.Radiobutton(cqr, text="Both (cardiac + respiration)", value="both",
+                        variable=self._cardiac_var).pack(side="left", padx=(0, 16))
+        ttk.Radiobutton(cqr, text="Respiration only (bad piezo)", value="resp",
+                        variable=self._cardiac_var).pack(side="left")
+        cqb = ttk.Frame(cq); cqb.pack(fill="x", pady=(4, 0))
+        self._qc_btn = ttk.Button(cqb, text="▶  Cardiac QC (visual)", command=self._run_cardiac_qc)
+        self._qc_btn.pack(side="left", padx=(0, 6))
+        ttk.Button(cqb, text="📂 Open QC", command=self._open_cardiac_qc).pack(side="left")
 
         # Individual part buttons
         parts_frame = ttk.LabelFrame(tab, text="Run individual parts", padding=(10, 6))
@@ -3317,11 +3711,11 @@ class Step05Panel(ttk.Frame):
             raise ValueError("Select a BIDS subject.")
         preproc = self._preproc_var.get().strip()
         if not preproc or not os.path.isdir(preproc):
-            raise ValueError(f"Preprocessed directory not found:\n{preproc}\nRun step04 first.")
+            raise ValueError(f"Preprocessed directory not found:\n{preproc}\nRun step03 first.")
         return subj, preproc
 
     def _all_buttons(self):
-        return [self._p1_btn, self._p2_btn, self._p3_btn, self._all_btn]
+        return [self._p1_btn, self._p2_btn, self._p3_btn, self._all_btn, self._qc_btn]
 
     def _lock(self):
         for b in self._all_buttons():
@@ -3346,6 +3740,7 @@ class Step05Panel(ttk.Frame):
         sd    = self._cfg["sourcedata"].get().strip()
         mcode = self._mcode_var.get().strip()
 
+        card = "1" if self._cardiac_var.get() == "both" else "0"
         matlab_cmd = (
             f"set(0,'DefaultFigureVisible','off');"
             f"addpath('{mcode}');"
@@ -3354,9 +3749,38 @@ class Step05Panel(ttk.Frame):
             f"'SMS',{self._sms_var.get()},"
             f"'FS_OUT',{self._fs_var.get()},"
             f"'TR_FALLBACK',{self._tr_var.get()},"
+            f"'Cardiac',{card},"
             f"'SESSION','{self._session_var.get()}');"
         )
-        self._run_matlab(matlab_cmd, inp, "Part 1 — Generate 1D", "step_05_p1")
+        self._run_matlab(matlab_cmd, inp, "Part 1 — Generate 1D", "step_04_p1")
+
+    # ── Cardiac (piezo) QC ────────────────────────────────────────────────────
+
+    def _run_cardiac_qc(self):
+        try:
+            subj, preproc = self._validate()
+        except ValueError as e:
+            messagebox.showerror("Error", str(e)); return
+        mcode  = self._mcode_var.get().strip()
+        qc_dir = str(Path(preproc).parent / "cardiac_qc")
+        matlab_cmd = (
+            f"set(0,'DefaultFigureVisible','off');"
+            f"addpath('{mcode}');"
+            f"cardiac_qc('{preproc}','{subj}','{qc_dir}');"
+        )
+        self._run_matlab(matlab_cmd, preproc, "Cardiac QC", "step_04_cardiacqc")
+
+    def _open_cardiac_qc(self):
+        preproc = self._preproc_var.get().strip()
+        if not preproc:
+            return
+        qc_dir = str(Path(preproc).parent / "cardiac_qc")
+        if not os.path.isdir(qc_dir):
+            messagebox.showinfo("Cardiac QC",
+                f"No QC folder yet:\n{qc_dir}\nRun 'Cardiac QC' first.")
+            return
+        self._runner.run(cmd=["open", qc_dir], cwd=qc_dir,
+                         on_line=self._console.append, on_done=lambda rc: None)
 
     # ── Part 2: Copy BOLD ─────────────────────────────────────────────────────
 
@@ -3382,7 +3806,7 @@ class Step05Panel(ttk.Frame):
             f"find '{func_dir}' -maxdepth 1 -name '*_bold.json'   -exec cp -n {{}} '{inp}/' \\;\n"
             f"echo 'Copied BOLDs and JSONs.'"
         )
-        self._run_cmd(["bash", "-c", script], inp, "Part 2 — Copy BOLD", "step_05_p2")
+        self._run_cmd(["bash", "-c", script], inp, "Part 2 — Copy BOLD", "step_04_p2")
 
     # ── Part 3: RETROICOR ─────────────────────────────────────────────────────
 
@@ -3404,7 +3828,7 @@ class Step05Panel(ttk.Frame):
             f"addpath('{mcode}');addpath('{rcode}');"
             f"retroicor_batch('{inp}','{out}','{rcode}');"
         )
-        self._run_matlab(matlab_cmd, inp, "Part 3 — RETROICOR", "step_05_p3")
+        self._run_matlab(matlab_cmd, inp, "Part 3 — RETROICOR", "step_04_p3")
 
     # ── Run All ───────────────────────────────────────────────────────────────
 
@@ -3429,26 +3853,28 @@ class Step05Panel(ttk.Frame):
         script = (
             f"set -euo pipefail\n"
             # Part 1
-            f"echo '[Step 05] Part 1 — Generate 1D ...'\n"
+            f"echo '[Step 04] Part 1 — Generate 1D ...'\n"
             f"matlab -nodisplay -nosplash -batch \""
             f"set(0,'DefaultFigureVisible','off');"
             f"addpath('{mcode}');"
             f"preproc_generate_1D_v2('{preproc}','{inp}','{subj}','{sd}',"
             f"'SMS',{self._sms_var.get()},'FS_OUT',{self._fs_var.get()},"
-            f"'TR_FALLBACK',{self._tr_var.get()},'SESSION','{ses}');\"\n"
+            f"'TR_FALLBACK',{self._tr_var.get()},"
+            f"'Cardiac',{'1' if self._cardiac_var.get() == 'both' else '0'},"
+            f"'SESSION','{ses}');\"\n"
             # Part 2
-            f"echo '[Step 05] Part 2 — Copy BOLD ...'\n"
+            f"echo '[Step 04] Part 2 — Copy BOLD ...'\n"
             f"find '{func_dir}' -maxdepth 1 -name '*_bold.nii.gz' -exec cp -n {{}} '{inp}/' \\;\n"
             f"find '{func_dir}' -maxdepth 1 -name '*_bold.json'   -exec cp -n {{}} '{inp}/' \\;\n"
             # Part 3
-            f"echo '[Step 05] Part 3 — RETROICOR ...'\n"
+            f"echo '[Step 04] Part 3 — RETROICOR ...'\n"
             f"matlab -nodisplay -nosplash -batch \""
             f"set(0,'DefaultFigureVisible','off');"
             f"addpath('{mcode}');addpath('{rcode}');"
             f"retroicor_batch('{inp}','{out}','{rcode}');\"\n"
-            f"echo '[Step 05] Done.'"
+            f"echo '[Step 04] Done.'"
         )
-        self._run_cmd(["bash", "-c", script], inp, "Step 05 — All parts", "step_05")
+        self._run_cmd(["bash", "-c", script], inp, "Step 04 — All parts", "step_04")
 
     # ── Shared run helpers ────────────────────────────────────────────────────
 
@@ -3481,7 +3907,7 @@ class Step05Panel(ttk.Frame):
 
 # ── Step 06 — Stimulus trigger extraction ────────────────────────────────────
 
-class Step06Panel(ttk.Frame):
+class StimPanel(ttk.Frame):
     """Step 06: Extract stim onsets from physioparse STIMTRIG, copy to fMRIPrep, prep first-level."""
 
     def __init__(self, parent, cfg: dict, console: Console,
@@ -3502,6 +3928,7 @@ class Step06Panel(ttk.Frame):
         self._session_var   = tk.StringVar(value="01")
         self._threshold_var = tk.StringVar(value="1.5")
         self._debounce_var  = tk.StringVar(value="1.5")
+        self._fd_thresh_var = tk.StringVar(value="0.5")   # FD spike threshold (mm)
         self._python_var    = cfg["python_exe"]
         self._do_qc         = tk.BooleanVar(value=True)
         self._do_prep       = tk.BooleanVar(value=True)
@@ -3542,7 +3969,7 @@ class Step06Panel(ttk.Frame):
         def pr(lbl, var, mode="dir"):
             PathRow(pf, lbl, mode=mode, var=var, label_width=26).pack(fill="x", pady=2)
 
-        pr("Parsed mats (physioparse step 03):", self._parsed_var)
+        pr("Parsed mats (physioparse step 02):", self._parsed_var)
         pr("Stim output dir:", self._stim_var)
         pr("fMRIPrep derivatives dir:", self._fmriprep_var)
         pr("Retroicor output (regressors):", self._retro_var)
@@ -3561,13 +3988,14 @@ class Step06Panel(ttk.Frame):
         er("Session (ses-__):", self._session_var)
         er("STIMTRIG step threshold:", self._threshold_var)
         er("Debounce (min sec between events):", self._debounce_var)
+        er("FD spike threshold (mm):", self._fd_thresh_var)
 
         # Options
         opts = ttk.LabelFrame(tab, text="Options", padding=(10, 6))
         opts.pack(fill="x", pady=(0, 8))
         ttk.Checkbutton(opts, text="Generate QC plots per run (STIMTRIG + detected onsets)",
                         variable=self._do_qc).pack(anchor="w")
-        ttk.Checkbutton(opts, text="Prepare first-level folder (copy stim + motion + BOLD)",
+        ttk.Checkbutton(opts, text="Prepare first-level folder (stim + generated motion regressors + BOLD)",
                         variable=self._do_prep).pack(anchor="w")
 
         return tab
@@ -3686,7 +4114,7 @@ class Step06Panel(ttk.Frame):
         if not subj:
             raise ValueError("Select a BIDS subject.")
         if not parsed or not os.path.isdir(parsed):
-            raise ValueError(f"Parsed directory not found:\n{parsed}\nRun step03 first.")
+            raise ValueError(f"Parsed directory not found:\n{parsed}\nRun step02 (physioparse) first.")
         return subj, parsed
 
     def _extractor(self):
@@ -3790,29 +4218,37 @@ class Step06Panel(ttk.Frame):
 
         stim   = self._stim_var.get().strip()
         fmrip  = self._fmriprep_var.get().strip()
-        retro  = self._retro_var.get().strip()
         ses    = self._session_var.get().strip()
         fl_dir = self._firstlvl_var.get().strip()
+        fd     = self._fd_thresh_var.get().strip() or "0.5"
+        python = self._python_var.get().strip()
         subj_dir = str(Path(fmrip) / subj)
         func_dir = str(Path(fmrip) / subj / f"ses-{ses}" / "func")
+        motion_ext = str(SCRIPTS_ROOT / "utility" / "extract_motion_regressors.py")
 
-        # Numbered sub-folders (the GLM also accepts legacy unnumbered names)
+        # NEW PIPELINE (RETROICOR → fMRIPrep): no 03_retroicor_regressors — physio
+        # was removed from the BOLD before fMRIPrep, so GLM nuisance = motion only.
         d_stim   = f"{fl_dir}/01_stim_onsets"
         d_motion = f"{fl_dir}/02_motion_regressors"
-        d_retro  = f"{fl_dir}/03_retroicor_regressors"
         d_bold   = f"{fl_dir}/04_bolds"
+        log_dir  = f"{fl_dir}/logs"
         script = (
             f"set -euo pipefail\n"
-            f"mkdir -p '{d_stim}' '{d_motion}' '{d_retro}' '{d_bold}'\n"
+            f"mkdir -p '{d_stim}' '{d_motion}' '{d_bold}'\n"
             # Stim files
             f"for f in '{stim}'/*_bold_stim.txt; do [ -f \"$f\" ] && cp -f \"$f\" '{d_stim}/'; done\n"
-            # Motion regressors — search the subject root AND the func dir
+            # Motion regressors — GENERATE from fMRIPrep confounds (6 rigid + FD spikes)
+            f"if [ -f '{motion_ext}' ] && [ -d '{func_dir}' ]; then\n"
+            f"  echo 'Generating motion regressors (6 rigid + FD>{fd} mm spikes)...'\n"
+            f"  '{python}' '{motion_ext}' '{func_dir}' '{d_motion}' "
+            f"--subject '{subj}' --session '{ses}' --fd-thresh {fd} --log-dir '{log_dir}' "
+            f"|| echo '  WARNING: motion regressor generation failed'\n"
+            f"else echo '  WARNING: cannot generate motion regressors (missing script or func dir)'; fi\n"
+            # Legacy fallback: copy any pre-existing *_motion_regressors.txt not already present
             f"for f in '{subj_dir}'/*_motion_regressors.txt '{func_dir}'/*_motion_regressors.txt; do "
-            f"[ -f \"$f\" ] && cp -f \"$f\" '{d_motion}/'; done\n"
-            # Retroicor regressors (*_retro-regressors.mat)
-            f"for f in '{retro}'/*_retro-regressors.mat; do "
-            f"[ -f \"$f\" ] && cp -f \"$f\" '{d_retro}/'; done\n"
-            # T1w BOLD
+            f"[ -f \"$f\" ] || continue; bn=$(basename \"$f\"); "
+            f"[ -f '{d_motion}/'\"$bn\" ] || cp -f \"$f\" '{d_motion}/'; done\n"
+            # T1w BOLD (physio-cleaned by RETROICOR before fMRIPrep)
             f"for f in '{func_dir}'/*_space-T1w_desc-preproc_bold.nii.gz; do "
             f"[ -f \"$f\" ] && cp -f \"$f\" '{d_bold}/'; done\n"
             f"echo 'First-level folder ready: {fl_dir}'"
@@ -3840,12 +4276,13 @@ class Step06Panel(ttk.Frame):
         python  = self._python_var.get().strip()
         qc_flag = "1" if self._do_qc.get() else "0"
         prep    = "0" if self._do_prep.get() else "1"
+        fd      = self._fd_thresh_var.get().strip() or "0.5"
 
         sd = self._cfg["sourcedata"].get().strip()
         cmd = [
             "bash", script_path,
             subj, sd, parsed, stim, fmrip, fl_dir,
-            ses, thr, deb, python, qc_flag, prep, retro,
+            ses, thr, deb, python, qc_flag, prep, retro, fd,
         ]
         self._run_cmd(cmd, stim, "All parts")
 
@@ -3877,7 +4314,7 @@ class Step06Panel(ttk.Frame):
 
 # ── Step 07 — First-level GLM + MNI ───────────────────────────────────────────
 
-class Step07Panel(ttk.Frame):
+class FirstLevelPanel(ttk.Frame):
     """Step 07: First-level SPM GLM (masks located in fmriprep, not copied) + MNI warp."""
 
     def __init__(self, parent, cfg: dict, console: Console,
@@ -3889,7 +4326,7 @@ class Step07Panel(ttk.Frame):
         self._runner  = runner
 
         # ── Vars ──────────────────────────────────────────────────────────────
-        self._sublist_var = tk.StringVar(value=str(SCRIPTS_ROOT / "utility" / "SubjectListBIDS.txt"))
+        self._sublist_var = cfg["subjlist_bids"]
         self._firstlvl_var = tk.StringVar()
         self._output_var   = tk.StringVar()
         self._spm_var      = cfg["spm_dir"]
@@ -3903,6 +4340,10 @@ class Step07Panel(ttk.Frame):
         self._do_mni       = tk.BooleanVar(value=True)
         self._use_sourcedata = tk.BooleanVar(value=False)
         self._warp_only    = tk.BooleanVar(value=False)
+        self._space_var    = tk.StringVar(value="T1w")   # T1w | MNI | both (Task 06)
+        self._restrict_bs  = tk.BooleanVar(value=False)   # restrict GLM to brainstem (Task 05 C2)
+        self._bs_mask_var  = cfg["brainstem_mask"]        # shared brainstem mask path
+        self._bs_smooth_var = tk.StringVar(value="")      # optional brainstem smoothing (mm)
         # Single-folder warp (warp ANY con folder + a T1 → MNI)
         self._wf_con_var   = tk.StringVar()
         self._wf_t1_var    = tk.StringVar()
@@ -3965,12 +4406,40 @@ class Step07Panel(ttk.Frame):
         er("TR (seconds):", self._tr_var)
         er("Smoothing FWHM (mm, isotropic):", self._smooth_var)
 
-        ttk.Checkbutton(pm, text="Warp contrasts to MNI (segment T1 → wcon_*.nii)",
+        spr = ttk.Frame(pm); spr.pack(fill="x", pady=(4, 0))
+        ttk.Label(spr, text="First-level space:").pack(side="left")
+        ttk.Combobox(spr, textvariable=self._space_var, width=7, state="readonly",
+                     values=["T1w", "MNI", "both"]).pack(side="left", padx=(4, 0))
+        ttk.Label(pm, foreground="gray", wraplength=560,
+                  text=("'T1w' models the fMRIPrep T1w BOLD (con in T1w; optional SPM warp below). "
+                        "'MNI' models the fMRIPrep MNI BOLD directly (con already MNI → wcon_*, no "
+                        "SPM warp). 'both' does T1w in <subj>/<task> and MNI in <subj>/<task>/mni.")
+                  ).pack(anchor="w")
+
+        ttk.Checkbutton(pm, text="Warp T1w contrasts to MNI (segment T1 → wcon_*.nii; only for T1w space)",
                         variable=self._do_mni).pack(anchor="w", pady=(4, 0))
+
+        # ── Brainstem restriction (Task 05 C2) ───────────────────────────────
+        ttk.Checkbutton(pm, text="Restrict GLM to brainstem mask (explicit mask = brainstem ∩ brain)",
+                        variable=self._restrict_bs).pack(anchor="w", pady=(6, 0))
+        PathRow(pm, "Brainstem mask:", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._bs_mask_var, label_width=18).pack(fill="x", pady=2)
+        bsr = ttk.Frame(pm); bsr.pack(fill="x")
+        ttk.Label(bsr, text="Brainstem smoothing FWHM (mm, blank = use above):").pack(side="left")
+        ttk.Entry(bsr, textvariable=self._bs_smooth_var, width=6).pack(side="left", padx=(4, 0))
+        ttk.Label(pm, foreground="gray", wraplength=560,
+                  text=("Build the mask in the Brainstem Mask tool. It must match the modeling "
+                        "space — use 'First-level space = MNI' with an MNI brainstem mask.")
+                  ).pack(anchor="w")
         ttk.Checkbutton(pm, text="Use per-subject physio dirs (sourcedata/derivatives/physio/<subj>/stimtrigger/)",
                         variable=self._use_sourcedata).pack(anchor="w", pady=(4, 0))
         ttk.Checkbutton(pm, text="Warp-only mode (skip GLM, only warp existing con_*.nii to MNI)",
                         variable=self._warp_only).pack(anchor="w", pady=(4, 0))
+        ttk.Label(pm, foreground="gray", wraplength=560,
+                  text=("Nuisance regressors = motion + FD spikes only. Physiological noise was "
+                        "removed from the BOLD by RETROICOR before fMRIPrep, so no physio "
+                        "regressors are added here.")).pack(anchor="w", pady=(4, 0))
 
         ttk.Separator(self).pack(fill="x", pady=8)
 
@@ -4080,11 +4549,16 @@ class Step07Panel(ttk.Frame):
         do_mni = "1" if self._do_mni.get() else "0"
         warp_only = "1" if self._warp_only.get() else "0"
         use_sourcedata = "1" if self._use_sourcedata.get() else "0"
+        space = self._space_var.get().strip() or "T1w"
+        restrict_bs = "1" if self._restrict_bs.get() else "0"
+        bs_mask = self._bs_mask_var.get().strip()
+        bs_smooth = self._bs_smooth_var.get().strip()
 
         cmd = [
             "bash", script,
             sublist, sd, flvl, out, spm, matlab, mcode,
             ses, run, tr, smooth, do_mni, env, warp_only, use_sourcedata,
+            space, restrict_bs, bs_mask, bs_smooth,
         ]
 
         self._console.separator()
@@ -4117,7 +4591,7 @@ class Step07Panel(ttk.Frame):
 
 # ── Step 08 — Second-level (group) analysis ───────────────────────────────────
 
-class Step08Panel(ttk.Frame):
+class SecondLevelPanel(ttk.Frame):
     """Step 08, two parts:
        Part 1 — Populate per-task folders from the step07 contrasts.
        Part 2 — Cases vs Controls two-sample analysis + contrasts."""
@@ -4142,6 +4616,12 @@ class Step08Panel(ttk.Frame):
         self._env_var      = cfg["env_script"]
         self._con_var      = tk.StringVar(value="wcon_0001.nii")
         self._do_combined  = tk.BooleanVar(value=True)
+        self._combined_mode = tk.StringVar(value="average")   # average (default) | pool (legacy)
+        # Optional nuisance covariates (Task 08) — sourced from participants.tsv + fMRIPrep
+        self._cov_age = tk.BooleanVar(value=False)
+        self._cov_sex = tk.BooleanVar(value=False)
+        self._cov_fd  = tk.BooleanVar(value=False)
+        self._restrict_bs = tk.BooleanVar(value=False)   # restrict group to brainstem (C3)
 
         ttk.Label(self, text="Step 08 — Second-level (Group)",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
@@ -4229,8 +4709,31 @@ class Step08Panel(ttk.Frame):
         of.pack(fill="x", pady=(0, 8))
         PathRow(of, "Group output dir:", mode="dir",
                 var=self._group_out, label_width=22).pack(fill="x", pady=2)
-        ttk.Checkbutton(of, text="Also run pooled BlockStim + ContinuousStim",
+        ttk.Checkbutton(of, text="Also run combined BlockStim + ContinuousStim",
                         variable=self._do_combined).pack(anchor="w", pady=(4, 0))
+        cmr = ttk.Frame(of); cmr.pack(anchor="w", pady=(2, 0))
+        ttk.Label(cmr, text="    Combined mode:").pack(side="left")
+        ttk.Combobox(cmr, textvariable=self._combined_mode, width=9, state="readonly",
+                     values=["average", "pool"]).pack(side="left", padx=(4, 0))
+        ttk.Label(of, foreground="gray", wraplength=560,
+                  text=("'average' (default, recommended): average each subject's Block+Continuous "
+                        "into one image → one observation per subject. 'pool' (legacy): enters both "
+                        "conditions per subject — double-counts, inflates false positives.")
+                  ).pack(anchor="w")
+        cvr = ttk.Frame(of); cvr.pack(anchor="w", pady=(6, 0))
+        ttk.Label(cvr, text="Nuisance covariates (optional):").pack(side="left")
+        ttk.Checkbutton(cvr, text="age", variable=self._cov_age).pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(cvr, text="sex", variable=self._cov_sex).pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(cvr, text="mean_fd", variable=self._cov_fd).pack(side="left", padx=(8, 0))
+        ttk.Label(of, foreground="gray", wraplength=560,
+                  text=("age/sex from sourcedata/participants.tsv, mean_fd from the fMRIPrep "
+                        "confounds (auto-built). A covariate incomplete for the analysed subjects "
+                        "is dropped with a warning.")).pack(anchor="w")
+        ttk.Checkbutton(of, text="Restrict group analysis to brainstem mask (explicit mask; Task 05)",
+                        variable=self._restrict_bs).pack(anchor="w", pady=(6, 0))
+        ttk.Label(of, foreground="gray", wraplength=560,
+                  text="Uses the mask from the Brainstem Mask tool (cfg brainstem_mask); must be in wcon/MNI space."
+                  ).pack(anchor="w")
 
         ttk.Separator(tab).pack(fill="x", pady=8)
         row = ttk.Frame(tab); row.pack(anchor="w")
@@ -4310,10 +4813,18 @@ class Step08Panel(ttk.Frame):
             messagebox.showerror("Error", "Set the group output directory.")
             return
         comb = "1" if self._do_combined.get() else "0"
+        covs = [c for c, v in (("age", self._cov_age), ("sex", self._cov_sex),
+                               ("mean_fd", self._cov_fd)) if v.get()]
+        cov_arg = ",".join(covs) if covs else "none"
+        sd = self._cfg["sourcedata"].get().strip()
+        bs_mask = self._cfg["brainstem_mask"].get().strip() if self._restrict_bs.get() else ""
         cmd = ["bash", script, troot, cases, ctrls, out,
                self._spm_var.get().strip(), self._matlab_var.get().strip(),
                self._mcode_var.get().strip(), comb,
-               self._env_var.get().strip() or "none"]
+               self._env_var.get().strip() or "none",
+               self._combined_mode.get().strip() or "average",
+               cov_arg, "", "", sd, "01",   # participants/fmriprep auto-derived from sourcedata
+               bs_mask]
         self._launch(cmd, self._p2_btn, self._p2_prog, "Part 2 — Group analysis")
 
     def _launch(self, cmd, btn, prog, label):
@@ -4341,7 +4852,7 @@ class Step08Panel(ttk.Frame):
 
 # ── Step 09 — Threshold group map (p<0.05) ────────────────────────────────────
 
-class Step09Panel(ttk.Frame):
+class ThresholdPanel(ttk.Frame):
     """Step 09: threshold a step08b group contrast at p<0.05 → significance map."""
 
     def __init__(self, parent, cfg: dict, console: Console,
@@ -4362,6 +4873,8 @@ class Step09Panel(ttk.Frame):
         self._extent_var   = tk.StringVar(value="0")
         self._cidx_var     = tk.StringVar(value="1")
         self._tail_var     = tk.StringVar(value="pos")
+        self._corr_var     = tk.StringVar(value="none")   # none | FWE | FDR (optional)
+        self._restrict_bs  = tk.BooleanVar(value=False)    # restrict threshold to brainstem (C3)
 
         ttk.Label(self, text="Step 09 — Threshold group map",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
@@ -4404,6 +4917,17 @@ class Step09Panel(ttk.Frame):
         ttk.Label(tr, text="Tail:").pack(side="left")
         ttk.Combobox(tr, textvariable=self._tail_var, width=6, state="readonly",
                      values=["pos", "neg", "two"]).pack(side="left", padx=(4, 0))
+        cr = ttk.Frame(pm); cr.pack(side="left", padx=(0, 6))
+        ttk.Label(cr, text="Correction:").pack(side="left")
+        ttk.Combobox(cr, textvariable=self._corr_var, width=6, state="readonly",
+                     values=["none", "FWE", "FDR"]).pack(side="left", padx=(4, 0))
+
+        ttk.Label(self, foreground="gray", wraplength=600,
+                  text=("Correction is OPTIONAL — 'none' (uncorrected) is fine for this pilot. "
+                        "'FWE'/'FDR' add voxel-wise multiple-comparison control; output filenames "
+                        "are tagged with the method (unc/FWE/FDR).")).pack(anchor="w", pady=(6, 0))
+        ttk.Checkbutton(self, text="Restrict to brainstem mask (intersect with cfg brainstem_mask; Task 05)",
+                        variable=self._restrict_bs).pack(anchor="w", pady=(2, 0))
 
         cfg["sourcedata"].trace_add("write", lambda *_: self._sync())
         self._sync()
@@ -4434,7 +4958,9 @@ class Step09Panel(ttk.Frame):
                self._spm_var.get().strip(), self._matlab_var.get().strip(),
                self._mcode_var.get().strip(), self._p_var.get().strip() or "0.05",
                self._extent_var.get().strip() or "0", self._cidx_var.get().strip() or "1",
-               self._tail_var.get().strip() or "pos", self._env_var.get().strip() or "none"]
+               self._tail_var.get().strip() or "pos", self._env_var.get().strip() or "none",
+               self._corr_var.get().strip() or "none",
+               (self._cfg["brainstem_mask"].get().strip() if self._restrict_bs.get() else "")]
         self._console.separator()
         self._console.append("[Step 09] Thresholding group map…", "info")
         self._console.separator()
@@ -4455,7 +4981,7 @@ class Step09Panel(ttk.Frame):
 
 # ── Step 10 — ROI extraction + spheres ────────────────────────────────────────
 
-class Step10Panel(ttk.Frame):
+class RoiPanel(ttk.Frame):
     """Step 10: at a coordinate, extract per-subject wcon values, build spheres,
        and mask a con with the large sphere."""
 
@@ -4476,6 +5002,11 @@ class Step10Panel(ttk.Frame):
         self._con_var     = tk.StringVar()
         self._gcon_var    = tk.StringVar()   # group-comparison contrast to mask
         self._gmask_var   = tk.StringVar()   # 10 mm mask (manually selected)
+        self._sigmask_var = tk.StringVar()   # optional step09 corrected significance mask
+        self._roimask_var  = tk.StringVar()  # optional whole-mask ROI (e.g. brainstem) (C4)
+        self._roiatlas_var = tk.StringVar()  # optional labeled atlas (per-nucleus means)
+        self._roilabels_var = tk.StringVar() # atlas label values
+        self._roinames_var  = tk.StringVar() # atlas label names
         self._rsmall_var  = tk.StringVar(value="5")
         self._rlarge_var  = tk.StringVar(value="10")
         self._python_var  = cfg["python_exe"]
@@ -4512,6 +5043,13 @@ class Step10Panel(ttk.Frame):
         PathRow(pf, "Con to mask (10 mm):", mode="file",
                 filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
                 var=self._con_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Significance mask (opt):", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._sigmask_var, label_width=22).pack(fill="x", pady=2)
+        ttk.Label(pf, text="(optional step09 corrected *_mask.nii — adds a sphere mean "
+                           "restricted to significant voxels)",
+                  foreground="gray", wraplength=560).pack(anchor="w")
+
         PathRow(pf, "Python exe:", mode="file",
                 var=self._python_var, label_width=22).pack(fill="x", pady=2)
 
@@ -4527,6 +5065,26 @@ class Step10Panel(ttk.Frame):
                 var=self._gmask_var, label_width=18).pack(fill="x", pady=2)
         ttk.Label(gm, text="Writes <contrast>_groupmasked.nii (values inside the mask, 0 outside).",
                   foreground="gray", wraplength=560).pack(anchor="w", pady=(2, 0))
+
+        # Mask / atlas ROIs — coordinate-free per-subject means (Task 05 C4)
+        am = ttk.LabelFrame(self, text="Mask / atlas ROIs (coordinate-free; X/Y/Z optional)",
+                            padding=(10, 6))
+        am.pack(fill="x", pady=(0, 8))
+        PathRow(am, "ROI mask (whole-mask mean):", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._roimask_var, label_width=24).pack(fill="x", pady=2)
+        PathRow(am, "Labeled atlas (per-nucleus):", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._roiatlas_var, label_width=24).pack(fill="x", pady=2)
+        alr = ttk.Frame(am); alr.pack(fill="x", pady=2)
+        ttk.Label(alr, text="Labels:").pack(side="left")
+        ttk.Entry(alr, textvariable=self._roilabels_var, width=16).pack(side="left", padx=(4, 12))
+        ttk.Label(alr, text="Names:").pack(side="left")
+        ttk.Entry(alr, textvariable=self._roinames_var, width=20).pack(side="left", padx=(4, 0))
+        ttk.Label(am, foreground="gray", wraplength=560,
+                  text=("ROI mask → one mean column per subject (e.g. the brainstem mask). "
+                        "Labeled atlas + label values (+ optional names) → one mean column per "
+                        "nucleus. Leave X/Y/Z empty to run these alone.")).pack(anchor="w")
 
         rf = ttk.LabelFrame(self, text="Sphere radii (mm)", padding=(10, 6))
         rf.pack(fill="x", pady=(0, 8))
@@ -4548,8 +5106,11 @@ class Step10Panel(ttk.Frame):
         if not os.path.isfile(script):
             messagebox.showerror("Error", f"step10_ROI.sh not found:\n{script}"); return
         x, y, z = (self._x_var.get().strip(), self._y_var.get().strip(), self._z_var.get().strip())
-        if not (x and y and z):
-            messagebox.showerror("Error", "Enter X, Y, Z coordinates."); return
+        roi_mask  = self._roimask_var.get().strip()
+        roi_atlas = self._roiatlas_var.get().strip()
+        if not (x and y and z) and not (roi_mask or roi_atlas):
+            messagebox.showerror("Error",
+                "Enter X, Y, Z coordinates, or set a ROI mask / atlas (coordinate-free)."); return
         wcon = self._wcon_var.get().strip()
         out  = self._output_var.get().strip()
         if not wcon or not os.path.isdir(wcon):
@@ -4564,7 +5125,9 @@ class Step10Panel(ttk.Frame):
                self._rlarge_var.get().strip() or "10",
                self._mode_var.get().strip() or "mm",
                self._python_var.get().strip(),
-               gcon, gmask]
+               gcon, gmask, self._sigmask_var.get().strip(),
+               roi_mask, roi_atlas,
+               self._roilabels_var.get().strip(), self._roinames_var.get().strip()]
         self._console.separator()
         self._console.append(f"[Step 10] ROI extraction at ({x},{y},{z}) {self._mode_var.get()}…", "info")
         self._console.separator()
@@ -4738,8 +5301,7 @@ class ProjectInventory:
             "derivatives":  {},
             "subject_lists": {
                 "SubjectList":     self._read_list(self._cfg["subjlist"].get().strip()),
-                "SubjectListBIDS": self._read_list(
-                    str(SCRIPTS_ROOT / "utility" / "SubjectListBIDS.txt")),
+                "SubjectListBIDS": self._read_list(self._cfg["subjlist_bids"].get().strip()),
             },
         }
         if deriv and os.path.isdir(deriv):
@@ -4818,6 +5380,120 @@ class ProjectInventory:
         self.save(new)
         log_path = self.write_log(new)
         return new, changes, log_path
+
+
+# ── Brainstem Mask tool (Task 05, Part C1) ────────────────────────────────────
+
+class BrainstemMaskPanel(ttk.Frame):
+    """Build a binary brainstem mask from a user-supplied atlas, resampled to the
+    analysis grid. The mask (cfg['brainstem_mask']) restricts steps 07/08/09/10
+    to the brainstem. BYO atlas — see the recommended sources below."""
+
+    _RECOMMENDED = (
+        "Recommended brainstem atlases (download/generate, in MNI — match fMRIPrep's "
+        "MNI152NLin2009cAsym):\n"
+        "  • Brainstem Navigator (Bianciardi lab) — probabilistic nuclei (NTS/NST, LC, "
+        "raphe, PAG, PBN…): nitrc.org/projects/brainstemnavig\n"
+        "  • Harvard Ascending Arousal Network (AAN) atlas — LC, raphe, PBN, PAG…\n"
+        "  • SUIT cerebellum/brainstem, or a hand-drawn brainstem ROI.\n"
+        "Probabilistic atlas → set a threshold; labeled atlas → list the label values; "
+        "reference = a wcon_*.nii or the fMRIPrep MNI BOLD (sets the output grid)."
+    )
+
+    def __init__(self, parent, cfg: dict, console: Console,
+                 status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
+        super().__init__(parent, padding=14, **kwargs)
+        self._cfg = cfg; self._console = console
+        self._status = status_var; self._runner = runner
+
+        self._atlas_var  = tk.StringVar()
+        self._ref_var    = tk.StringVar()
+        self._out_var    = cfg["brainstem_mask"]
+        self._thr_var    = tk.StringVar(value="0.0")
+        self._labels_var = tk.StringVar(value="")
+        self._dilate_var = tk.StringVar(value="0")
+        self._python_var = cfg["python_exe"]
+
+        ttk.Label(self, text="Brainstem Mask  (Task 05 — restrict analysis to the brainstem)",
+                  font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(self, text=("Builds a binary brainstem mask from YOUR atlas, resampled to the "
+                              "analysis grid. Used as the explicit mask in steps 07/08/09/10."),
+                  foreground="gray", wraplength=600).pack(anchor="w", pady=(0, 8))
+
+        pf = ttk.LabelFrame(self, text="Atlas → mask", padding=(10, 6))
+        pf.pack(fill="x", pady=(0, 8))
+        PathRow(pf, "Brainstem atlas/mask:", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._atlas_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Reference grid (wcon/BOLD):", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._ref_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Output mask:", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._out_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "Python exe:", mode="file",
+                var=self._python_var, label_width=22).pack(fill="x", pady=2)
+
+        pm = ttk.Frame(pf); pm.pack(fill="x", pady=(4, 0))
+        ttk.Label(pm, text="Threshold (prob):").pack(side="left")
+        ttk.Entry(pm, textvariable=self._thr_var, width=6).pack(side="left", padx=(4, 14))
+        ttk.Label(pm, text="Labels (ints):").pack(side="left")
+        ttk.Entry(pm, textvariable=self._labels_var, width=14).pack(side="left", padx=(4, 14))
+        ttk.Label(pm, text="Dilate (vox):").pack(side="left")
+        ttk.Entry(pm, textvariable=self._dilate_var, width=5).pack(side="left", padx=(4, 0))
+
+        ttk.Label(self, text=self._RECOMMENDED, foreground="#4a6", wraplength=620,
+                  justify="left").pack(anchor="w", pady=(8, 8))
+
+        # default output under sourcedata derivatives
+        def _sync(*_):
+            sd = cfg["sourcedata"].get().strip()
+            if sd and not self._out_var.get():
+                self._out_var.set(str(Path(sd) / "derivatives" / "brainstem" / "brainstem_mask.nii"))
+        cfg["sourcedata"].trace_add("write", _sync); _sync()
+
+        row = ttk.Frame(self); row.pack(anchor="w")
+        self._btn = ttk.Button(row, text="▶  Build brainstem mask", command=self._run)
+        self._btn.pack(side="left")
+        self._progress = ttk.Progressbar(row, mode="indeterminate", length=220)
+        self._progress.pack(side="left", padx=12)
+
+    def _run(self):
+        script = str(SCRIPTS_ROOT / "utility" / "prep_brainstem_mask.py")
+        atlas = self._atlas_var.get().strip()
+        ref   = self._ref_var.get().strip()
+        out   = self._out_var.get().strip()
+        if not (atlas and os.path.isfile(atlas)):
+            messagebox.showerror("Error", f"Atlas not found:\n{atlas}"); return
+        if not (ref and os.path.isfile(ref)):
+            messagebox.showerror("Error", f"Reference grid NIfTI not found:\n{ref}"); return
+        if not out:
+            messagebox.showerror("Error", "Set an output mask path."); return
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        cmd = [self._python_var.get().strip() or "python3", script,
+               "--atlas", atlas, "--reference", ref, "--output", out,
+               "--threshold", self._thr_var.get().strip() or "0.0"]
+        labels = self._labels_var.get().replace(",", " ").split()
+        if labels:
+            cmd += ["--labels", *labels]
+        dil = self._dilate_var.get().strip()
+        if dil and dil != "0":
+            cmd += ["--dilate", dil]
+        self._console.separator()
+        self._console.append("[Brainstem mask] building…", "info")
+        self._btn.config(state="disabled"); self._progress.start(10)
+        self._status.set("Building brainstem mask…")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append, on_done=self._done)
+
+    def _done(self, rc):
+        self._progress.stop(); self._btn.config(state="normal")
+        if rc == 0:
+            self._status.set("Brainstem mask built ✓")
+            self._console.append("[Brainstem mask] done. Path stored for steps 07/08/09/10.", "ok")
+        else:
+            self._status.set(f"Brainstem mask failed (exit {rc})")
+            self._console.append(f"[Brainstem mask] failed (exit {rc}).", "error")
 
 
 # ── Project sidebar ────────────────────────────────────────────────────────────
@@ -4930,13 +5606,16 @@ class SidebarPanel(ttk.Frame):
             self._cfg["project_root"].set(d)
 
     def _on_project_change(self, *_):
-        """Point rawdata + sourcedata under the selected project folder.
-        Changing sourcedata cascades (fMRIPrep auto-derive + auto-check)."""
+        """Point rawdata + sourcedata + the subject lists under the selected
+        project folder. Changing sourcedata cascades (fMRIPrep + auto-check)."""
         pr = self._cfg["project_root"].get().strip()
         if not pr:
             return
         self._cfg["out_path"].set(str(Path(pr) / "rawdata"))
         self._cfg["sourcedata"].set(str(Path(pr) / "sourcedata"))
+        # Subject lists live in <project>/codes/
+        self._cfg["subjlist"].set(str(Path(pr) / "codes" / "SubjectList.txt"))
+        self._cfg["subjlist_bids"].set(str(Path(pr) / "codes" / "SubjectListBIDS.txt"))
 
     def _create_project(self):
         parent = self._cfg["project_root"].get().strip()
@@ -5104,32 +5783,37 @@ class App(tk.Tk):
             return st
 
         t_setup  = panel(SetupPanel,     cfg)
-        t_step00 = panel(Step00Panel,    cfg, console, status_var, runner, state=pipeline)
-        t_step01 = panel(Step01Panel,    cfg, console, status_var, runner, state=pipeline)
-        t_step02 = panel(Step02Panel,    cfg, console, status_var, runner, state=pipeline)
-        t_physio = panel(PhysioPanel,    cfg, console, status_var, runner)
-        t_step04 = panel(Step04Panel,    cfg, console, status_var, runner)
-        t_step05 = panel(Step05Panel,    cfg, console, status_var, runner)
-        t_step06 = panel(Step06Panel,    cfg, console, status_var, runner)
-        t_step07 = panel(Step07Panel,    cfg, console, status_var, runner)
-        t_step08 = panel(Step08Panel,    cfg, console, status_var, runner)
-        t_step09 = panel(Step09Panel,    cfg, console, status_var, runner)
-        t_step10 = panel(Step10Panel,    cfg, console, status_var, runner)
+        t_download = panel(DownloadPanel,    cfg, console, status_var, runner, state=pipeline)
+        t_bids = panel(BidsPanel,    cfg, console, status_var, runner, state=pipeline)
+        t_fmriprep = panel(FmriprepPanel,    cfg, console, status_var, runner, state=pipeline)
+        t_physioparse = panel(PhysioparsePanel,    cfg, console, status_var, runner)
+        t_preproc = panel(PreprocRdecoPanel,    cfg, console, status_var, runner)
+        t_retroicor = panel(RetroicorPanel,    cfg, console, status_var, runner)
+        t_stim = panel(StimPanel,    cfg, console, status_var, runner)
+        t_firstlevel = panel(FirstLevelPanel,    cfg, console, status_var, runner)
+        t_secondlevel = panel(SecondLevelPanel,    cfg, console, status_var, runner)
+        t_threshold = panel(ThresholdPanel,    cfg, console, status_var, runner)
+        t_roi = panel(RoiPanel,    cfg, console, status_var, runner)
         t_heur   = panel(HeuristicPanel, cfg, console, status_var)
+        t_qc     = panel(QCPanel,        cfg, console, status_var, runner)
+        t_bsmask = panel(BrainstemMaskPanel, cfg, console, status_var, runner)
 
         nav.add("⚙  Setup",               t_setup,  section="Config")
-        nav.add("00  Download DICOMs",    t_step00, section="Pipeline")
-        nav.add("01  BIDS Conversion",    t_step01)
-        nav.add("02  fMRIPrep",           t_step02)
-        nav.add("03  Physioparse",        t_physio)
-        nav.add("04  Preprocess + RDECO", t_step04)
-        nav.add("05  RETROICOR",          t_step05)
-        nav.add("06  Stim Triggers",      t_step06)
-        nav.add("07  First-level + MNI",  t_step07)
-        nav.add("08  Second-level",       t_step08)
-        nav.add("09  Threshold p<0.05",   t_step09)
-        nav.add("10  ROI extraction",     t_step10)
+        # NEW ORDER: RETROICOR (native, physio image-correction) runs BEFORE fMRIPrep.
+        nav.add("00  Download DICOMs",    t_download, section="Pipeline")
+        nav.add("01  BIDS Conversion",    t_bids)
+        nav.add("02  Physioparse",        t_physioparse)
+        nav.add("03  Preprocess + RDECO", t_preproc)
+        nav.add("04  RETROICOR",          t_retroicor)
+        nav.add("05  fMRIPrep",           t_fmriprep)
+        nav.add("06  Stim Triggers",      t_stim)
+        nav.add("07  First-level + MNI",  t_firstlevel)
+        nav.add("08  Second-level",       t_secondlevel)
+        nav.add("09  Threshold p<0.05",   t_threshold)
+        nav.add("10  ROI extraction",     t_roi)
         nav.add("∷  Heuristic",           t_heur,   section="Tools")
+        nav.add("⬡  QC Snapshots",        t_qc)
+        nav.add("⊟  Brainstem Mask",      t_bsmask)
 
         # Expose console/status so Save/Load config can report progress
         self._console    = console

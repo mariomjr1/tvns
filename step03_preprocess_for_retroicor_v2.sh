@@ -1,18 +1,18 @@
 #!/bin/bash
 
 # ============================================================================
-# step04_preprocess_for_retroicor_v2.sh
+# step03_preprocess_for_retroicor_v2.sh
 # Created by Mario Murakami
 #
-# Filter per-sequence physio .mat files (physioparse step 03 output) to
-# prepare them for R-DECO cardiac annotation and RETROICOR (step 05).
+# Filter per-sequence physio .mat files (physioparse step 02 output) to
+# prepare them for R-DECO cardiac annotation and RETROICOR (step 04).
 #
 # What this script does:
 #   For each task-*_run-*.mat in the physioparse parsed/ folder:
 #     1. Applies highpass + bandpass filtering to RPIEZO (cardiac signal)
 #     2. Computes the Hilbert envelope of the filtered signal
 #     3. Saves two output files:
-#          <subj>_task-*_run-*_filtered.mat   physio struct (for step 05)
+#          <subj>_task-*_run-*_filtered.mat   physio struct (for step 04)
 #          <subj>_task-*_run-*_rpiezo.mat     plain RPIEZO array (for R-DECO)
 #
 # STOPS BEFORE R-DECO.
@@ -20,10 +20,10 @@
 #     - Open each *_rpiezo.mat in R-DECO  (utility/r-deco-master/R_DECO.m)
 #     - Detect and correct R-peaks
 #     - Save R-DECO output as *_rdeco.mat in the same output folder
-#     - Then run step05_retroicor_v2.sh
+#     - Then run step04_retroicor_v2.sh
 #
 # Usage:
-#   bash step04_preprocess_for_retroicor_v2.sh <bids_subject_id> [options]
+#   bash step03_preprocess_for_retroicor_v2.sh <bids_subject_id> [options]
 #
 # Required:
 #   bids_subject_id    BIDS subject ID (e.g. sub-7T1019HC042726)
@@ -72,7 +72,7 @@ BP_LOW="${9:-0.5}"
 BP_HIGH="${10:-2.0}"
 
 echo "============================================"
-echo " STEP 04 — Filter physio for RETROICOR"
+echo " STEP 03 — Filter physio for RETROICOR"
 echo " Subject:       ${BIDS_SUBJ}"
 echo " Input (parsed):${PARSED_DIR}"
 echo " Output:        ${OUTPUT_DIR}"
@@ -85,7 +85,7 @@ echo ""
 # ── Validate ──────────────────────────────────────────────────────────────────
 if [ ! -d "${PARSED_DIR}" ]; then
     echo "ERROR: Parsed physio directory not found: ${PARSED_DIR}"
-    echo "  Run step03_physioparse_v2.sh for this subject first."
+    echo "  Run step02_physioparse_v2.sh for this subject first."
     exit 1
 fi
 
@@ -154,7 +154,7 @@ if [ ${matlab_exit} -eq 0 ]; then
     echo "   6. Save output as <subj>_task-*_run-*_rdeco.mat"
     echo "      in: ${OUTPUT_DIR}"
     echo " ──────────────────────────────────────────"
-    echo " Then run: bash step05_retroicor_v2.sh ${BIDS_SUBJ}"
+    echo " Then run: bash step04_retroicor_v2.sh ${BIDS_SUBJ}"
     echo "============================================"
 else
     echo "ERROR: MATLAB exited with code ${matlab_exit}"

@@ -37,6 +37,7 @@ import numpy as np
 
 try:
     import nibabel as nib
+    from nibabel.processing import resample_from_to
 except ImportError:
     print("ERROR: nibabel not installed (pip install nibabel)", file=sys.stderr)
     sys.exit(1)
@@ -70,9 +71,10 @@ def build_sphere_mask(shape, affine, center_mm, radius_mm):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--coord", nargs=3, type=float, required=True,
+    ap.add_argument("--coord", nargs=3, type=float, default=None,
                     metavar=("X", "Y", "Z"),
-                    help="Coordinate (MNI mm by default; voxel indices with --voxel)")
+                    help="Coordinate (MNI mm by default; voxel indices with --voxel). "
+                         "Optional if --roi-mask / --roi-atlas is given.")
     ap.add_argument("--wcon-dir", required=True,
                     help="Folder of per-subject wcon images (<subject>.nii)")
     ap.add_argument("--wcon-glob", default="*.nii",
@@ -91,7 +93,27 @@ def main():
     ap.add_argument("--group-mask", default=None,
                     help="Mask to apply to --group-con (manually selected). If omitted, "
                          "the auto-generated large sphere is used.")
+    ap.add_argument("--sig-mask", default=None,
+                    help="Optional significance mask (e.g. a step09 corrected *_mask.nii): "
+                         "adds a per-subject sphere mean restricted to significant voxels.")
+    # ── Mask-based ROIs (Task 05 C4) — coordinate-free ────────────────────────
+    ap.add_argument("--roi-mask", nargs="+", default=None,
+                    help="One or more binary mask NIfTIs (e.g. the brainstem mask, or a "
+                         "single-nucleus mask): per-subject MEAN within each → CSV column.")
+    ap.add_argument("--roi-atlas", default=None,
+                    help="A labeled atlas NIfTI: per-subject mean within each label (see "
+                         "--roi-labels) → one CSV column per nucleus.")
+    ap.add_argument("--roi-labels", nargs="+", type=int, default=None,
+                    help="Integer label values to extract from --roi-atlas "
+                         "(default: all nonzero labels).")
+    ap.add_argument("--roi-label-names", nargs="+", default=None,
+                    help="Optional names for --roi-labels (same count/order).")
     args = ap.parse_args()
+
+    have_coord = args.coord is not None
+    if not (have_coord or args.roi_mask or args.roi_atlas):
+        print("ERROR: give --coord and/or --roi-mask / --roi-atlas.", file=sys.stderr)
+        sys.exit(1)
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -109,36 +131,87 @@ def main():
     affine = ref.affine
     shape = ref.shape[:3]
 
-    # Resolve the coordinate to both voxel and mm
-    if args.voxel:
-        ijk = np.round(np.array(args.coord)).astype(int)
-        center_mm = vox_to_mm(affine, ijk)
-    else:
-        center_mm = np.array(args.coord, dtype=float)
-        ijk = np.round(mm_to_vox(affine, center_mm)).astype(int)
+    # ── Resample helper: bring any mask/atlas onto the reference grid (NN) ─────
+    def _to_ref(path):
+        im = nib.load(path)
+        d = np.asanyarray(im.dataobj)
+        if d.ndim == 4:
+            d = d[..., 0]
+        if im.shape[:3] == shape and np.allclose(im.affine, affine, atol=1e-3):
+            return d
+        res = resample_from_to(
+            nib.Nifti1Image(d.astype(np.float32), im.affine, im.header),
+            (shape, affine), order=0)
+        return np.asanyarray(res.dataobj)
 
-    print(f"Coordinate: MNI mm = {center_mm.tolist()}  |  voxel = {ijk.tolist()}")
-    if not (0 <= ijk[0] < shape[0] and 0 <= ijk[1] < shape[1] and 0 <= ijk[2] < shape[2]):
-        print("ERROR: voxel is outside the image bounds.", file=sys.stderr)
-        sys.exit(1)
-
-    radii = sorted(args.radii)
-    r_small = radii[0]
-    r_large = radii[-1]
-
-    # Build sphere masks (one per radius) and save them
     masks = {}
-    for r in radii:
-        m = build_sphere_mask(shape, affine, center_mm, r)
-        masks[r] = m
-        out = os.path.join(
-            args.output_dir,
-            f"sphere_{int(r)}mm_{int(round(center_mm[0]))}_"
-            f"{int(round(center_mm[1]))}_{int(round(center_mm[2]))}.nii")
-        nib.save(nib.Nifti1Image(m.astype(np.uint8), affine, ref.header), out)
-        print(f"  sphere {int(r)}mm: {int(m.sum())} voxels -> {out}")
+    r_small = r_large = None
+    center_mm = ijk = None
+    if have_coord:
+        if args.voxel:
+            ijk = np.round(np.array(args.coord)).astype(int)
+            center_mm = vox_to_mm(affine, ijk)
+        else:
+            center_mm = np.array(args.coord, dtype=float)
+            ijk = np.round(mm_to_vox(affine, center_mm)).astype(int)
+        print(f"Coordinate: MNI mm = {center_mm.tolist()}  |  voxel = {ijk.tolist()}")
+        if not (0 <= ijk[0] < shape[0] and 0 <= ijk[1] < shape[1] and 0 <= ijk[2] < shape[2]):
+            print("ERROR: voxel is outside the image bounds.", file=sys.stderr)
+            sys.exit(1)
+        radii = sorted(args.radii)
+        r_small, r_large = radii[0], radii[-1]
+        for r in radii:
+            m = build_sphere_mask(shape, affine, center_mm, r)
+            masks[r] = m
+            out = os.path.join(
+                args.output_dir,
+                f"sphere_{int(r)}mm_{int(round(center_mm[0]))}_"
+                f"{int(round(center_mm[1]))}_{int(round(center_mm[2]))}.nii")
+            nib.save(nib.Nifti1Image(m.astype(np.uint8), affine, ref.header), out)
+            print(f"  sphere {int(r)}mm: {int(m.sum())} voxels -> {out}")
+    small_mask = masks[r_small] if have_coord else None
 
-    small_mask = masks[r_small]
+    # ── Optional significance mask (restricts the sphere mean) ─────────────────
+    sig_mask = None
+    if args.sig_mask and have_coord:
+        if not os.path.isfile(args.sig_mask):
+            print(f"ERROR: sig-mask not found: {args.sig_mask}", file=sys.stderr)
+            sys.exit(1)
+        sig_mask = _to_ref(args.sig_mask) > 0.5
+        n_sig_in = int(np.count_nonzero(small_mask & sig_mask))
+        print(f"  significance mask: {int(sig_mask.sum())} sig voxels; "
+              f"{n_sig_in} inside the {int(r_small)}mm sphere")
+
+    # ── Mask-based ROIs (Task 05 C4): whole-mask + per-nucleus atlas labels ───
+    roi_specs = []   # (column_name, bool_array_on_ref_grid)
+    for mpath in (args.roi_mask or []):
+        if not os.path.isfile(mpath):
+            print(f"ERROR: roi-mask not found: {mpath}", file=sys.stderr); sys.exit(1)
+        arr = _to_ref(mpath) > 0.5
+        name = "roi_" + os.path.basename(mpath).split(".nii")[0]
+        roi_specs.append((name, arr))
+        print(f"  roi-mask {name}: {int(arr.sum())} voxels")
+    if args.roi_atlas:
+        if not os.path.isfile(args.roi_atlas):
+            print(f"ERROR: roi-atlas not found: {args.roi_atlas}", file=sys.stderr); sys.exit(1)
+        adata = np.rint(_to_ref(args.roi_atlas)).astype(np.int64)
+        labels = args.roi_labels or [int(v) for v in np.unique(adata) if v != 0]
+        names = args.roi_label_names or [f"label{v}" for v in labels]
+        if len(names) != len(labels):
+            print("ERROR: --roi-label-names count must match --roi-labels.", file=sys.stderr)
+            sys.exit(1)
+        for v, nm in zip(labels, names):
+            arr = adata == v
+            roi_specs.append((f"nuc_{nm}", arr))
+            print(f"  atlas label {v} ({nm}): {int(arr.sum())} voxels")
+
+    # ── Build the CSV header dynamically ──────────────────────────────────────
+    header = ["subject"]
+    if have_coord:
+        header += ["voxel_value", f"sphere{int(r_small)}mm_mean"]
+        if sig_mask is not None:
+            header.append(f"sphere{int(r_small)}mm_sig_mean")
+    header += [name for name, _ in roi_specs]
 
     # ── Extract per-subject values ────────────────────────────────────────────
     rows = []
@@ -149,21 +222,37 @@ def main():
         if data.shape[:3] != shape:
             print(f"  WARNING: {subj} shape {data.shape[:3]} != ref {shape}; skipping")
             continue
-        vox_val = float(data[ijk[0], ijk[1], ijk[2]])
-        sphere_vals = data[small_mask]
-        sphere_mean = float(np.nanmean(sphere_vals)) if sphere_vals.size else float("nan")
-        rows.append((subj, vox_val, sphere_mean))
-        print(f"  {subj}: voxel={vox_val:.4f}  sphere{int(r_small)}mm_mean={sphere_mean:.4f}")
+        row = [subj]
+        msg = f"  {subj}:"
+        if have_coord:
+            vox_val = float(data[ijk[0], ijk[1], ijk[2]])
+            sphere_vals = data[small_mask]
+            sphere_mean = float(np.nanmean(sphere_vals)) if sphere_vals.size else float("nan")
+            row += [vox_val, sphere_mean]
+            msg += f" voxel={vox_val:.4f} sphere{int(r_small)}mm={sphere_mean:.4f}"
+            if sig_mask is not None:
+                sv = data[small_mask & sig_mask]
+                row.append(float(np.nanmean(sv)) if sv.size else float("nan"))
+                msg += f" sig={row[-1]:.4f}"
+        for name, arr in roi_specs:
+            vals = data[arr]
+            mval = float(np.nanmean(vals)) if vals.size else float("nan")
+            row.append(mval)
+            msg += f" {name}={mval:.4f}"
+        rows.append(tuple(row))
+        print(msg)
 
     csv_path = os.path.join(args.output_dir, "roi_values.csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["subject", "voxel_value", f"sphere{int(r_small)}mm_mean"])
+        writer.writerow(header)
         writer.writerows(rows)
-    print(f"\nWrote {len(rows)} rows -> {csv_path}")
+    print(f"\nWrote {len(rows)} rows × {len(header)} cols -> {csv_path}")
 
-    # ── Mask a manually-selected con with the largest sphere ──────────────────
-    if args.con:
+    # ── Mask a manually-selected con with the largest sphere (needs --coord) ──
+    if args.con and not have_coord:
+        print("NOTE: --con masking needs --coord (a sphere) — skipped.", file=sys.stderr)
+    if args.con and have_coord:
         if not os.path.isfile(args.con):
             print(f"ERROR: con file not found: {args.con}", file=sys.stderr)
             sys.exit(1)
@@ -197,9 +286,13 @@ def main():
             mimg = nib.load(args.group_mask)
             gmask = np.asanyarray(mimg.dataobj) > 0
             mask_label = os.path.basename(args.group_mask)
-        else:
+        elif have_coord:
             gmask = masks[r_large]
             mask_label = f"auto {int(r_large)}mm sphere"
+        else:
+            print("ERROR: --group-con needs --group-mask (or --coord for a sphere).",
+                  file=sys.stderr)
+            sys.exit(1)
 
         if gmask.shape[:3] != gdata.shape[:3]:
             print(f"ERROR: group-con shape {gdata.shape[:3]} != mask shape "

@@ -35,7 +35,7 @@ outputDir     = '/autofs/cluster/vagabond/USERS/MARIO/Projects/7T/sourcedata/der
 
 ses  = '01';
 run  = '01';
-tasks = {'ContinuousStim','BlockStim','rest'};
+tasks = {'ContinuousStim','BlockStim'};   % 'rest' = resting baseline, no Stim contrast (Task 10)
 
 % SPM timing
 TR = 1.19;  % seconds

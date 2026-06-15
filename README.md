@@ -12,8 +12,9 @@ brainstem signal.
 ## What this pipeline does
 
 This pipeline converts raw 7 T MRI sessions into group-level activation maps for a
-tVNS study with three functional conditions — **BlockStim**, **ContinuousStim**,
-and **rest**. Starting from DICOMs pulled off the cluster archive, it organises the
+tVNS study with three functional acquisitions — **BlockStim**, **ContinuousStim**,
+and **rest** (rest is a resting **baseline**: it carries no stimulus, so the
+first-level/group Stim-contrast steps skip it by default — see the rest note below). Starting from DICOMs pulled off the cluster archive, it organises the
 data into BIDS (HeuDiConv + dcm2niix), runs **fMRIPrep** for anatomical/functional
 preprocessing and spatial normalisation, then parses the simultaneously-recorded
 physiological signals (ADInstruments LabChart `.mat` exports) into per-sequence
@@ -29,12 +30,17 @@ masks. Every stage is exposed through a single tkinter dashboard with a project
 explorer, a live console, optional QC at each step, centralised configuration, and
 save/load of the full path configuration.
 
-> **Physiological-noise design (important).** RETROICOR is used as **nuisance
-> regressors in the GLM on the fMRIPrep-preprocessed BOLD** — *not* as an image
-> correction applied before fMRIPrep. fMRIPrep runs on the pristine raw BOLD; the
-> RETROICOR regressors (derived from physio + slice timing) and motion parameters
-> enter only at the modeling stage. This is the TAPAS/PhysIO-style standard and the
-> only arrangement that preserves fMRIPrep's motion correction.
+> **Physiological-noise design (important — RETROICOR → fMRIPrep).** RETROICOR is
+> applied as a **slice-wise image correction in native acquisition space, BEFORE
+> fMRIPrep**. The physiological branch (physioparse → R-DECO → RETROICOR) cleans the
+> raw BIDS BOLD per slice (where slice identity still exists), and fMRIPrep then runs
+> on the corrected image (motion correction, slice-timing correction, SDC, T1w/MNI
+> normalisation). The first-level GLM models the fMRIPrep BOLD with **stimulus + motion
+> + FD-spike regressors only** — no RETROICOR regressors, because the physiological
+> noise has already been removed from the data. This is the field-standard order
+> (AFNI applies `ricor` before `volreg`) and avoids the slice-collapse problem that
+> arises when slice-specific RETROICOR regressors are entered into a GLM on the
+> T1w-resampled BOLD (where acquisition-slice identity is lost).
 
 ---
 
@@ -72,12 +78,12 @@ and shared by every step. fMRIPrep auto-derives from the BIDS sourcedata path.
 |-----------|-----------|---------|
 | **Setup** | — | Common paths, subject-list editor |
 | **00 Download DICOMs** | `step00_unpack_V2.sh` | `findsession` + `rsync` raw DICOMs from the archive |
-| **01 BIDS Conversion** | `step01_create_bids_v2.sh` | HeuDiConv two-pass conversion; sequence viewer; **BIDS validator** |
-| **02 fMRIPrep** | `step02_fmriprep_v2.sh` | Raw→BIDS subject list; run fMRIPrep locally; optional pre/post QC GIF |
-| **03 Physioparse** | `step03_physioparse_v2.sh` | Pseudotime mapping → quality viz → parse segments → optional signal QC (Classic / Block1) |
-| **04 Preprocess + RDECO** | `step04_preprocess_for_retroicor_v2.sh` | Filter cardiac signal per sequence; **manual or automated R-DECO** R-peak detection |
-| **05 RETROICOR** | `step05_retroicor_v2.sh` | Generate 1D regressors (with R-DECO peaks) + RETROICOR |
-| **06 Stim Triggers** | `step06_stim_v2.sh` | Stimulus onsets from STIMTRIG; assemble first-level inputs (stim + motion + RETROICOR + BOLD) |
+| **01 BIDS Conversion** | `step01_create_bids_v2.sh` | HeuDiConv two-pass conversion; sequence viewer; **BIDS validator**; emits `SubjectListBIDS.txt` |
+| **02 Physioparse** | `step02_physioparse_v2.sh` | Pseudotime mapping → quality viz → parse segments → optional signal QC (Classic / Block1) |
+| **03 Preprocess + RDECO** | `step03_preprocess_for_retroicor_v2.sh` | Filter cardiac signal per sequence; **manual or automated R-DECO** R-peak detection; **cardiac QC** |
+| **04 RETROICOR** | `step04_retroicor_v2.sh` | Generate 1D regressors (with R-DECO peaks) + RETROICOR → native `*_retro-corrected.nii.gz` (cardiac+resp, or resp-only) |
+| **05 fMRIPrep** | `step05_fmriprep_v2.sh` | Assemble corrected BIDS → run fMRIPrep on the RETROICOR-corrected BOLD (with STC); optional pre/post QC GIF |
+| **06 Stim Triggers** | `step06_stim_v2.sh` | Stimulus onsets from STIMTRIG; assemble first-level inputs (stim + motion/FD + corrected BOLD) |
 | **07 First-level + MNI** | `step07_firstlevel_mni_v2.sh`, `step07b_warp_folder_v2.sh` | SPM GLM (masks located in place) + MNI warp; warp-only & single-folder-warp modes |
 | **08 Second-level** | `step08a_populate_v2.sh`, `step08b_groups_v2.sh` | Part 1 populate per-task folders; Part 2 cases-vs-controls two-sample t-tests |
 | **09 Threshold p<0.05** | `step09_p_value.sh` | Threshold a group contrast (e.g. Cases>Controls) → significance map |
@@ -107,15 +113,15 @@ Paths default to the lab layout but every value is a positional argument.
 
 ```text
 00  step00_unpack_V2.sh             Download raw DICOMs (findsession + rsync)
-01  step01_create_bids_v2.sh        HeuDiConv → BIDS  (utility/SubjectList.txt)
-02  step02_fmriprep_v2.sh           Raw→BIDS IDs (utility/SubjectListBIDS.txt) + fMRIPrep
-03  step03_physioparse_v2.sh        Parse LabChart .mat into per-sequence physio segments
-04  step04_preprocess_for_retroicor_v2.sh
+01  step01_create_bids_v2.sh        HeuDiConv → BIDS (utility/SubjectList.txt) + emit SubjectListBIDS.txt
+02  step02_physioparse_v2.sh        Parse LabChart .mat into per-sequence physio segments
+03  step03_preprocess_for_retroicor_v2.sh
                                      Filter RPIEZO per sequence → ready for R-DECO
         ── R-DECO ──                Manual GUI or automated (rdeco_auto_analysis.m) → *_rdeco.mat
-05  step05_retroicor_v2.sh          1D regressors + RETROICOR
+04  step04_retroicor_v2.sh          1D regressors + RETROICOR → native *_retro-corrected.nii.gz
+05  step05_fmriprep_v2.sh           Assemble corrected BIDS + run fMRIPrep on the corrected BOLD
 06  step06_stim_v2.sh               Stim onsets + first-level assembly (numbered subfolders)
-07  step07_firstlevel_mni_v2.sh     First-level SPM GLM + MNI normalisation
+07  step07_firstlevel_mni_v2.sh     First-level SPM GLM (stim + motion/FD) + MNI normalisation
     step07b_warp_folder_v2.sh       Optional: warp one already-done first-level folder to MNI
 08  step08a_populate_v2.sh          Part 1 — gather wcon images into per-task folders
     step08b_groups_v2.sh            Part 2 — cases-vs-controls two-sample t-tests + contrasts
@@ -194,11 +200,15 @@ track the data state.
 
 ## Method notes
 
-- **fMRIPrep first, RETROICOR as regressors.** See the design box above — the
-  fMRIPrep T1w BOLD (motion-corrected, SDC, registered) is modeled with RETROICOR
-  regressors + motion parameters, rather than feeding a RETROICOR-corrected image
-  into fMRIPrep. Slice-wise RETROICOR regressors are averaged across slices to yield
-  volume-level covariates.
+- **RETROICOR first, then fMRIPrep.** See the design box above — RETROICOR cleans the
+  raw BOLD per slice in native space, fMRIPrep then runs on the corrected image, and
+  the GLM models it with stimulus + motion/FD regressors only. This avoids collapsing
+  slice-specific RETROICOR regressors onto the resampled BOLD (which cancels the fast
+  cardiac terms). The RETROICOR-corrected BIDS is assembled under
+  `sourcedata_retrocorr/`; fMRIPrep writes its derivatives to the usual
+  `derivatives/fmriprep/` so all downstream steps are unchanged.
+- **Slice-timing correction is done by fMRIPrep** (on the corrected data); RETROICOR
+  uses slice timing only to compute physiological phase on the un-shifted data.
 - **Masks are located, not copied.** Step 07 reads the fMRIPrep brain masks and
   BOLDs directly from `derivatives/fmriprep/`.
 - **Group analysis needs MNI space.** Second-level tests use the `wcon_*.nii`
