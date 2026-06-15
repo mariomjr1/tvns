@@ -24,6 +24,7 @@ nilearn is used when available for smarter display ranges; falls back gracefully
 """
 
 import argparse
+import csv
 import datetime
 import json
 import os
@@ -31,12 +32,17 @@ import sys
 import traceback
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")          # headless — no display required
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import nibabel as nib
-import numpy as np
+# Heavy deps are only needed for image snapshots, not for the lightweight
+# --piezo-report path, so import them defensively.
+try:
+    import matplotlib
+    matplotlib.use("Agg")          # headless — no display required
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+    import nibabel as nib
+    import numpy as np
+except ImportError:
+    plt = gridspec = nib = np = None
 
 # ---------------------------------------------------------------------------
 # Step catalogue
@@ -424,6 +430,124 @@ def _make_montage_fallback(step_pngs: list, out_png: Path,
 
 
 # ---------------------------------------------------------------------------
+# Piezo cardiac-QC cohort report (Task 31 / piezo quality flagging)
+# ---------------------------------------------------------------------------
+
+def _read_csv_dicts(path: Path) -> list:
+    """Read a CSV into a list of dicts; return [] if missing/unreadable."""
+    if not path.is_file():
+        return []
+    try:
+        with open(path, newline="") as f:
+            return list(csv.DictReader(f))
+    except Exception as exc:
+        print(f"  [piezo] WARN cannot read {path}: {exc}", file=sys.stderr)
+        return []
+
+
+def build_piezo_cohort_report(sourcedata: str, out_dir: str, print_fn=print) -> dict:
+    """
+    Roll up per-subject cardiac QC verdicts and saved per-run decisions into one
+    cohort report, flagging every run that is BAD/SUSPECT or routed to
+    respiration-only.
+
+    Reads, per subject under <sourcedata>/derivatives/physio/<subj>/:
+        cardiac_qc/<subj>_cardiac_qc.csv         (verdict + recommendation)
+        preprocessed/<subj>_cardiac_decision.csv (saved user decision, optional)
+
+    Writes to <out_dir>/:
+        group_piezo_qc.csv   one row per (subject, task, run)
+        group_piezo_qc.md    human-readable flag list
+
+    Returns a small summary dict.
+    """
+    physio_root = Path(sourcedata) / "derivatives" / "physio"
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    if not physio_root.is_dir():
+        print_fn(f"[piezo] No physio derivatives at {physio_root}")
+        return {"subjects": 0, "runs": 0, "resp_only": 0, "flagged": 0}
+
+    subj_dirs = sorted(d for d in physio_root.iterdir()
+                       if d.is_dir() and d.name.startswith("sub-"))
+
+    records = []
+    for sd in subj_dirs:
+        subj = sd.name
+        qc_rows = _read_csv_dicts(sd / "cardiac_qc" / f"{subj}_cardiac_qc.csv")
+
+        # Map saved decisions: (task, run) -> use_cardiac ("1"/"0")
+        dec = {}
+        for d in _read_csv_dicts(sd / "preprocessed" / f"{subj}_cardiac_decision.csv"):
+            key = ((d.get("task") or "").strip(), (d.get("run") or "").strip())
+            dec[key] = (d.get("use_cardiac") or "").strip()
+
+        for r in qc_rows:
+            task = (r.get("task") or "").strip()
+            run  = (r.get("run") or "").strip()
+            verdict = (r.get("verdict") or "").strip().upper()
+            rec = (r.get("recommendation") or "").strip().lower()
+            decided = dec.get((task, run), "")
+            if decided in ("0", "1"):
+                applied = "both" if decided == "1" else "resp"
+            else:
+                applied = rec if rec in ("both", "resp") else (
+                    "both" if verdict in ("GOOD", "SUSPECT") else "resp")
+            records.append({
+                "subject": subj, "task": task, "run": run,
+                "verdict": verdict, "recommendation": rec,
+                "decided_use_cardiac": decided, "applied": applied,
+                "mean_hr_bpm": (r.get("mean_hr_bpm") or "").strip(),
+                "cv_rr": (r.get("cv_rr") or "").strip(),
+                "pct_implausible": (r.get("pct_implausible") or "").strip(),
+            })
+
+    # ── group_piezo_qc.csv ────────────────────────────────────────────────────
+    cols = ["subject", "task", "run", "verdict", "recommendation",
+            "decided_use_cardiac", "applied", "mean_hr_bpm", "cv_rr",
+            "pct_implausible"]
+    csv_path = out / "group_piezo_qc.csv"
+    with open(csv_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for rec in records:
+            w.writerow(rec)
+
+    # ── group_piezo_qc.md (flag list) ─────────────────────────────────────────
+    flagged = [r for r in records
+               if r["verdict"] in ("BAD", "SUSPECT") or r["applied"] == "resp"]
+    resp_only = [r for r in records if r["applied"] == "resp"]
+    n_subj = len({r["subject"] for r in records})
+    ts = datetime.datetime.now().isoformat(timespec="seconds")
+
+    md_path = out / "group_piezo_qc.md"
+    with open(md_path, "w") as f:
+        f.write("# Piezo cardiac QC — cohort report\n\n")
+        f.write(f"Generated: {ts}\n\n")
+        f.write(f"- Subjects: {n_subj}\n")
+        f.write(f"- Runs: {len(records)}\n")
+        f.write(f"- Respiration-only (applied): {len(resp_only)}\n")
+        f.write(f"- Flagged (BAD/SUSPECT or resp-only): {len(flagged)}\n\n")
+        if flagged:
+            f.write("## Flagged runs\n\n")
+            f.write("| subject | task | run | verdict | applied |\n")
+            f.write("|---|---|---|---|---|\n")
+            for r in flagged:
+                f.write(f"| {r['subject']} | {r['task']} | {r['run']} | "
+                        f"{r['verdict']} | {r['applied']} |\n")
+        else:
+            f.write("No flagged runs — all piezo traces usable.\n")
+
+    print_fn(f"[piezo] {len(records)} run(s) across {n_subj} subject(s); "
+             f"{len(resp_only)} respiration-only, {len(flagged)} flagged.")
+    print_fn(f"[piezo] Wrote {csv_path}")
+    print_fn(f"[piezo] Wrote {md_path}")
+    return {"subjects": n_subj, "runs": len(records),
+            "resp_only": len(resp_only), "flagged": len(flagged)}
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -442,10 +566,21 @@ def main():
                         help="Path to SubjectList.txt (raw IDs)")
     parser.add_argument("--subjlist_bids", default=None,
                         help="Path to SubjectListBIDS.txt (BIDS IDs)")
+    parser.add_argument("--piezo-report", dest="piezo_report", action="store_true",
+                        help="Build the cohort piezo cardiac-QC flag report and exit "
+                             "(group_piezo_qc.csv + .md) instead of image snapshots")
+    parser.add_argument("--out", default=None,
+                        help="Output dir for --piezo-report (default: <project_root>/codes/qc)")
     args = parser.parse_args()
 
     project_root = args.project_root
     sourcedata   = args.sourcedata
+
+    # Cohort piezo QC report mode — independent of image snapshots
+    if args.piezo_report:
+        out_dir = args.out or str(Path(project_root) / "codes" / "qc")
+        build_piezo_cohort_report(sourcedata, out_dir, print_fn=print)
+        return
 
     # Resolve BIDS subject list
     subjects = list(args.subjects)

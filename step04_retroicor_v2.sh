@@ -73,6 +73,12 @@ FS_OUT="${11:-40}"
 TR_FALLBACK="${12:-1.19}"
 # Cardiac: 1 = cardiac + respiration (needs R-DECO); 0 = RESPIRATION-ONLY (bad piezo)
 CARDIAC="${13:-1}"
+# Per-run piezo-QC decision manifest (overrides CARDIAC per run). If not given,
+# auto-use the conventional manifest in PREPROC_DIR when it exists.
+DECISION_FILE="${14:-}"
+if [ -z "${DECISION_FILE}" ] && [ -f "${PREPROC_DIR}/${BIDS_SUBJ}_cardiac_decision.csv" ]; then
+    DECISION_FILE="${PREPROC_DIR}/${BIDS_SUBJ}_cardiac_decision.csv"
+fi
 
 echo "============================================"
 echo " STEP 04 — RETROICOR (native-space physio correction, before fMRIPrep)"
@@ -107,6 +113,9 @@ if [ "${CARDIAC}" = "1" ]; then
 else
     echo " Cardiac mode: OFF — RESPIRATION-ONLY (R-DECO ignored; use for bad piezo)"
 fi
+if [ -n "${DECISION_FILE}" ]; then
+    echo " Per-run decisions: ${DECISION_FILE} (overrides global cardiac mode per run)"
+fi
 echo ""
 
 # ── Source environment ────────────────────────────────────────────────────────
@@ -138,12 +147,13 @@ preproc_generate_1D_v2( \
     'FS_OUT', ${FS_OUT}, \
     'TR_FALLBACK', ${TR_FALLBACK}, \
     'Cardiac', ${CARDIAC}, \
+    'DecisionFile', '${DECISION_FILE}', \
     'SESSION', '${SESSION}');"
 
-"${MATLAB_EXE}" -nodisplay -nosplash -batch "${matlab_cmd_p1}"
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: generate_1D_v2 failed."
+# Guard the call directly so the failure is caught under `set -e` and reported
+# (preproc_generate_1D_v2 now throws — non-zero exit — on any failed sequence).
+if ! "${MATLAB_EXE}" -nodisplay -nosplash -batch "${matlab_cmd_p1}"; then
+    echo "ERROR: generate_1D_v2 failed (one or more sequences failed, or invalid physio)."
     exit 1
 fi
 echo ""

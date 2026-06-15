@@ -97,7 +97,7 @@ function preproc_filter_per_sequence(input_dir, output_dir, bids_subject_id, var
         try
             raw = load(in_path);
 
-            % Validate required channels
+            % Validate required channels exist
             required = {'RESP', 'RPIEZO', 'MRTRIG', 'STIMTRIG'};
             for c = 1:numel(required)
                 if ~isfield(raw, required{c})
@@ -109,6 +109,29 @@ function preproc_filter_per_sequence(input_dir, output_dir, bids_subject_id, var
             RPIEZO   = raw.RPIEZO(:);
             MRTRIG   = raw.MRTRIG(:);
             STIMTRIG = raw.STIMTRIG(:);
+
+            % ── Validate channel CONTENT, not just existence (Task 31) ────────
+            % A present-but-flat channel passes the field check above but then
+            % produces garbage/NaN RETROICOR regressors with no error. Reject it.
+            if isempty(RESP) || numel(RESP) < 2 || std(RESP) == 0
+                error('RESP channel is empty or flat (zero variance) in %s', mats(k).name);
+            end
+            if isempty(RPIEZO) || numel(RPIEZO) < 2 || std(RPIEZO) == 0
+                % Cardiac is optional — respiration-only is a valid fallback for
+                % bad piezo — so a flat RPIEZO is a WARNING, not fatal. Cardiac QC
+                % / the per-run decision routes this run to respiration-only.
+                fprintf('  WARNING: RPIEZO is flat (zero variance) — cardiac unusable; use respiration-only\n');
+            end
+            % MRTRIG drives volume timing for trigger-bearing BOLD. Report zero
+            % rising edges now; preproc_generate_1D_v2 makes the final (fatal)
+            % determination once the sequence class is known.
+            if sum(diff(MRTRIG) > 2) == 0
+                fprintf('  WARNING: MRTRIG has no rising edges — trigger-bearing runs will fail in step04 Part 1\n');
+            end
+
+            % Remove DC offset from RESP (LabChart respiratory exports often carry
+            % a large baseline offset); mirrors the mean removal in filter_cardiac.
+            RESP = RESP - mean(RESP);
 
             % ── Filter RPIEZO (cardiac) ───────────────────────────────────────
             [PIEZOF, PIEZOD] = filter_cardiac(RPIEZO, sr, hp_cutoff, bp_low, bp_high);
@@ -145,6 +168,17 @@ function preproc_filter_per_sequence(input_dir, output_dir, bids_subject_id, var
     fprintf('\n========================================\n');
     fprintf(' Done.  OK: %d  |  Failed: %d\n', n_ok, n_fail);
     fprintf(' Output: %s\n', output_dir);
+
+    % ── Fail-fast (Task 31) ───────────────────────────────────────────────────
+    % Any sequence that failed leaves the subject's physio incomplete. Throw so
+    % MATLAB -batch returns a non-zero exit code and the calling shell aborts,
+    % instead of silently continuing the pipeline on partial/garbage physio.
+    if n_fail > 0
+        error('preproc_filter_per_sequence:failures', ...
+              '%d of %d sequence(s) FAILED filtering (see log above). Aborting.', ...
+              n_fail, numel(mats));
+    end
+
     fprintf('\nNext steps:\n');
     fprintf('  1. Open each *_rpiezo.mat in R-DECO (utility/r-deco-master/R_DECO.m)\n');
     fprintf('  2. Run automatic R-peak detection, correct manually if needed\n');

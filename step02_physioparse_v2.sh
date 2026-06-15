@@ -249,6 +249,19 @@ mkdir -p "${parsed_dir}"
     "${work_dir}" \
     "${parsed_dir}"
 
+# ── Segment-count cross-check (Task 31) ───────────────────────────────────────
+# Each BOLD run has one *_bold.json sidecar, so the number of parsed per-run mats
+# should match. A mismatch means the MR-trigger segmentation dropped or duplicated
+# a run (e.g. an extra scout trigger burst shifted all run labels) — flag it loudly.
+n_parsed=$(find "${parsed_dir}" -maxdepth 1 -name "task-*_run-*.mat" | wc -l | tr -d ' ')
+echo ""
+echo " Segment-count check: expected ${n_json} run(s) (BOLD sidecars), parsed ${n_parsed} segment(s)."
+if [ "${n_parsed}" -ne "${n_json}" ]; then
+    echo " *** WARNING: parsed segment count (${n_parsed}) != BOLD run count (${n_json}). ***"
+    echo "     Review pseudotime_plot.png and parsed/ before continuing — trigger"
+    echo "     misalignment can attach the wrong physio to the wrong BOLD run."
+fi
+
 echo ""
 echo "============================================"
 echo " Step 4: Signal QC"

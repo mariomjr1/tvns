@@ -24,7 +24,7 @@ in Step 07 — see the design note in the [README](README.md).
 step04_retroicor_v2.sh <bids_subject_id> \
     [sourcedata_dir] [preproc_dir] [retro_input_dir] [retro_output_dir] \
     [matlab_exe] [matlab_code_dir] [retro_code_dir] \
-    [session] [sms_flag] [fs_out] [tr_fallback]
+    [session] [sms_flag] [fs_out] [tr_fallback] [cardiac] [decision_file]
 ```
 | Param | Meaning | Default |
 |-------|---------|---------|
@@ -33,6 +33,8 @@ step04_retroicor_v2.sh <bids_subject_id> \
 | `sms_flag` | SMS / multiband (1/0) | `1` |
 | `fs_out` | output physio rate (Hz) | `40` |
 | `tr_fallback` | TR if JSON missing (s) | `1.19` |
+| `cardiac` | global cardiac flag: 1 = cardiac+resp, 0 = respiration-only | `1` |
+| `decision_file` | per-run piezo-QC manifest CSV (overrides `cardiac` per run) | auto: `<preproc>/<subj>_cardiac_decision.csv` if present |
 
 ## 4. Run
 ```bash
@@ -58,22 +60,46 @@ derivatives/physio/<subj>/retroicor/
            *_retro-pctvar.mat       (% variance explained)
 ```
 
-## 7. QC / verification
+## 7. Piezo cardiac quality — per-sequence review
+A messy piezo trace yields unreliable R-peaks; using its cardiac RETROICOR
+regressors injects structured noise rather than removing it. The pipeline policy
+is to **skip cardiac and run respiration-only** for those runs.
+
+In the GUI's **Step 04 → "Piezo QC Review"** tab:
+1. **Run / Refresh Cardiac QC** — generates a per-run QC image + verdict
+   (`cardiac_qc.m`; GOOD / SUSPECT / BAD).
+2. **Load review** — shows each sequence's piezo trace + R-peaks with a per-run
+   choice (**Use cardiac** / **Respiration only**), pre-selected from the verdict.
+3. **Save decisions** — writes `<preproc>/<subj>_cardiac_decision.csv`. Part 1
+   (and Run All) auto-apply it per run; runs not listed fall back to the global
+   cardiac choice.
+4. **Cohort report** — `qc_snapshots.py --piezo-report` rolls every subject's
+   verdicts + decisions into `codes/qc/group_piezo_qc.csv` and `.md`, flagging all
+   BAD/SUSPECT or respiration-only runs.
+
+A run routed to respiration-only logs `[PIEZO-SKIP]` and simply omits its
+`RETRO-qrs_*.1D`, so `retroicor_batch.m` corrects it with respiration only.
+
+## 8. QC / verification
 - Confirm `n_filtered` and (if used) `n_rdeco` counts match the number of runs.
 - Inspect `*_retro-pctvar.mat` for the % variance the regressors remove.
 - Optionally re-run the Step 02 pre/post GIF against `*_retro-corrected.nii.gz`
   to visualise physiological-noise removal.
+- **Fail-fast:** `preproc_generate_1D_v2.m` now aborts (non-zero exit) if any
+  sequence fails (e.g. flat physio, no MR triggers), so Part 1 stops instead of
+  silently producing a BOLD without its regressors.
 
 > The `*_retro-regressors.mat` are the GLM covariates; the corrected NIfTIs are
 > for visualisation. Step 07 models the **fMRIPrep T1w BOLD** with these
 > regressors (it does **not** use the RETROICOR-corrected image as input).
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 | Symptom | Cause / fix |
 |---------|-------------|
-| `No *_filtered.mat files found` | Run Step 04 first. |
-| `0 R-DECO file(s)` | R-DECO not run — proceeds respiration-only (no cardiac regressors). Run R-DECO in Step 04 to add them. |
+| `No *_filtered.mat files found` | Run Step 03 first. |
+| `0 R-DECO file(s)` | R-DECO not run — proceeds respiration-only (no cardiac regressors). Run R-DECO in Step 03 to add them. |
+| `generate_1D_v2 failed` | A sequence failed (flat physio / no MR triggers). Fix the offending run; the step now aborts instead of continuing. |
 | TR fallback warning | JSON missing `RepetitionTime` — verify sidecars or pass correct `tr_fallback`. |
 
-## 9. Next step
+## 10. Next step
 [SOP 05 — fMRIPrep](SOP_05_fmriprep.md)

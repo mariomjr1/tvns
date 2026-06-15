@@ -3552,6 +3552,9 @@ class RetroicorPanel(ttk.Frame):
         self._tr_var      = tk.StringVar(value=self._DEFAULTS["tr_fallback"])
         # Cardiac source: "both" (cardiac+resp) or "resp" (respiration-only, bad piezo)
         self._cardiac_var = tk.StringVar(value="both")
+        # Per-sequence piezo-QC review state
+        self._decision_rows: list = []   # [{task, run, verdict, var}]
+        self._thumb_refs: list = []      # keep PhotoImage refs alive (Tk GC)
 
         ttk.Label(self, text="Step 04 — RETROICOR",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 6))
@@ -3560,6 +3563,7 @@ class RetroicorPanel(ttk.Frame):
         nb.pack(fill="both", expand=True)
 
         nb.add(self._build_cfg_tab(nb),    text="  Configuration  ")
+        nb.add(self._build_review_tab(nb), text="  Piezo QC Review  ")
         nb.add(self._build_run_tab(nb),    text="  Run Pipeline  ")
 
         self._sync_paths()
@@ -3637,11 +3641,13 @@ class RetroicorPanel(ttk.Frame):
         ttk.Separator(tab).pack(fill="x", pady=8)
 
         # ── Piezo cardiac quality + cardiac/resp choice ─────────────────────────
-        cq = ttk.LabelFrame(tab, text="Piezo cardiac quality", padding=(10, 6))
+        cq = ttk.LabelFrame(tab, text="Piezo cardiac quality (global fallback)", padding=(10, 6))
         cq.pack(fill="x", pady=(0, 8))
         ttk.Label(cq, foreground="gray", wraplength=560,
                   text=("Bad piezo acquisition → unreliable R-peaks → cardiac RETROICOR "
-                        "injects noise. Run Cardiac QC, then choose how to proceed:")).pack(anchor="w")
+                        "injects noise. Prefer the 'Piezo QC Review' tab to decide per "
+                        "sequence; this global choice applies only to runs with no saved "
+                        "decision:")).pack(anchor="w")
         cqr = ttk.Frame(cq); cqr.pack(fill="x", pady=(4, 2))
         ttk.Radiobutton(cqr, text="Both (cardiac + respiration)", value="both",
                         variable=self._cardiac_var).pack(side="left", padx=(0, 16))
@@ -3715,7 +3721,16 @@ class RetroicorPanel(ttk.Frame):
         return subj, preproc
 
     def _all_buttons(self):
-        return [self._p1_btn, self._p2_btn, self._p3_btn, self._all_btn, self._qc_btn]
+        return [self._p1_btn, self._p2_btn, self._p3_btn, self._all_btn,
+                self._qc_btn, self._review_qc_btn]
+
+    def _decision_arg(self):
+        """MATLAB 'DecisionFile','...' fragment if a saved manifest exists, else ''."""
+        dpath = self._decision_path()
+        if dpath and dpath.exists():
+            self._console.append(f"[Step 04] Using per-run decisions: {dpath}", "info")
+            return f"'DecisionFile','{dpath}',"
+        return ""
 
     def _lock(self):
         for b in self._all_buttons():
@@ -3750,6 +3765,7 @@ class RetroicorPanel(ttk.Frame):
             f"'FS_OUT',{self._fs_var.get()},"
             f"'TR_FALLBACK',{self._tr_var.get()},"
             f"'Cardiac',{card},"
+            f"{self._decision_arg()}"
             f"'SESSION','{self._session_var.get()}');"
         )
         self._run_matlab(matlab_cmd, inp, "Part 1 — Generate 1D", "step_04_p1")
@@ -3781,6 +3797,202 @@ class RetroicorPanel(ttk.Frame):
             return
         self._runner.run(cmd=["open", qc_dir], cwd=qc_dir,
                          on_line=self._console.append, on_done=lambda rc: None)
+
+    # ── Piezo QC Review tab ────────────────────────────────────────────────────
+
+    def _qc_dir(self):
+        preproc = self._preproc_var.get().strip()
+        return Path(preproc).parent / "cardiac_qc" if preproc else None
+
+    def _decision_path(self):
+        """Manifest path step04 reads: <preproc>/<subj>_cardiac_decision.csv."""
+        preproc = self._preproc_var.get().strip()
+        subj    = self._subj_var.get().strip()
+        if not preproc or not subj:
+            return None
+        return Path(preproc) / f"{subj}_cardiac_decision.csv"
+
+    def _build_review_tab(self, parent):
+        tab = ttk.Frame(parent, padding=14)
+
+        ttk.Label(tab, text="Per-sequence piezo quality review",
+                  font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            tab,
+            text=("Run Cardiac QC, then Load review. For each sequence, inspect the "
+                  "piezo trace + R-peaks and choose whether to use cardiac RETROICOR "
+                  "or respiration-only. The verdict pre-selects a suggestion; your "
+                  "choice is saved to a decision manifest that step04 applies per run."),
+            foreground="gray", wraplength=620,
+        ).pack(anchor="w", pady=(0, 8))
+
+        btns = ttk.Frame(tab); btns.pack(fill="x", pady=(0, 6))
+        self._review_qc_btn = ttk.Button(btns, text="▶  Run / Refresh Cardiac QC",
+                                         command=self._run_cardiac_qc)
+        self._review_qc_btn.pack(side="left", padx=(0, 6))
+        ttk.Button(btns, text="⟳ Load review", command=self._load_review).pack(side="left", padx=(0, 6))
+        ttk.Button(btns, text="💾 Save decisions", command=self._save_decisions).pack(side="left", padx=(0, 6))
+        ttk.Button(btns, text="📂 Open QC folder", command=self._open_cardiac_qc).pack(side="left", padx=(0, 6))
+        ttk.Button(btns, text="📊 Cohort report", command=self._run_piezo_report).pack(side="left")
+
+        self._review_status = ttk.Label(tab, foreground="gray")
+        self._review_status.pack(anchor="w", pady=(0, 6))
+
+        # Scrollable list of per-sequence rows
+        holder = ttk.Frame(tab)
+        holder.pack(fill="both", expand=True)
+        self._review_canvas = tk.Canvas(holder, highlightthickness=0, height=420)
+        vsb = ttk.Scrollbar(holder, orient="vertical", command=self._review_canvas.yview)
+        self._review_canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self._review_canvas.pack(side="left", fill="both", expand=True)
+        self._review_inner = ttk.Frame(self._review_canvas)
+        win = self._review_canvas.create_window((0, 0), window=self._review_inner, anchor="nw")
+        self._review_inner.bind("<Configure>", lambda _: self._review_canvas.configure(
+            scrollregion=self._review_canvas.bbox("all")))
+        self._review_canvas.bind("<Configure>", lambda e: self._review_canvas.itemconfig(win, width=e.width))
+
+        return tab
+
+    def _load_review(self):
+        """Read the cardiac_qc CSV + PNGs and build one review row per sequence."""
+        try:
+            subj, preproc = self._validate()
+        except ValueError as e:
+            messagebox.showerror("Error", str(e)); return
+
+        qc_dir   = self._qc_dir()
+        csv_path = qc_dir / f"{subj}_cardiac_qc.csv" if qc_dir else None
+        if not csv_path or not csv_path.exists():
+            messagebox.showinfo("Piezo QC Review",
+                f"No QC results found:\n{csv_path}\nRun 'Cardiac QC' first.")
+            return
+
+        # Clear any previous rows
+        for child in self._review_inner.winfo_children():
+            child.destroy()
+        self._decision_rows = []
+        self._thumb_refs = []
+
+        try:
+            with open(csv_path, newline="") as f:
+                rows = list(csv.DictReader(f))
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not read QC CSV:\n{e}"); return
+
+        _vcol = {"GOOD": "#2e9650", "SUSPECT": "#d9a30a", "BAD": "#cc3326"}
+        n_bad = 0
+        for r in rows:
+            task = (r.get("task") or "").strip()
+            run  = (r.get("run")  or "").strip()
+            verdict = (r.get("verdict") or "").strip().upper()
+            rec     = (r.get("recommendation") or "").strip().lower()
+            if rec not in ("both", "resp"):
+                rec = "both" if verdict in ("GOOD", "SUSPECT") else "resp"
+            if rec == "resp":
+                n_bad += 1
+
+            row = ttk.LabelFrame(self._review_inner,
+                                 text=f"{task}  run-{run}", padding=(8, 6))
+            row.pack(fill="x", pady=4, padx=2)
+
+            png = qc_dir / f"{subj}_task-{task}_run-{run}_cardiacqc.png"
+            self._add_thumbnail(row, png)
+
+            right = ttk.Frame(row); right.pack(side="left", fill="x", expand=True, padx=(10, 0))
+            ttk.Label(right, text=f"Verdict: {verdict or 'NA'}",
+                      foreground=_vcol.get(verdict, "#555"),
+                      font=("Helvetica", 11, "bold")).pack(anchor="w")
+            metrics = (f"HR {r.get('mean_hr_bpm','?')} bpm   "
+                       f"RR CV {r.get('cv_rr','?')}   "
+                       f"implausible {r.get('pct_implausible','?')}%   "
+                       f"max gap {r.get('max_gap_s','?')}s")
+            ttk.Label(right, text=metrics, foreground="gray").pack(anchor="w", pady=(0, 4))
+
+            var = tk.StringVar(value=rec)
+            choice = ttk.Frame(right); choice.pack(anchor="w")
+            ttk.Radiobutton(choice, text="Use cardiac (both)", value="both",
+                            variable=var).pack(side="left", padx=(0, 14))
+            ttk.Radiobutton(choice, text="Respiration only", value="resp",
+                            variable=var).pack(side="left", padx=(0, 14))
+            ttk.Button(choice, text="Open full",
+                       command=lambda p=str(png): self._open_image(p)).pack(side="left")
+
+            self._decision_rows.append({"task": task, "run": run,
+                                        "verdict": verdict, "var": var})
+
+        self._review_status.config(
+            text=(f"{len(rows)} sequence(s) loaded — {n_bad} suggested respiration-only. "
+                  f"Adjust as needed, then Save decisions."),
+            foreground="#cc3326" if n_bad else "#2e9650")
+
+    def _add_thumbnail(self, parent, png_path: Path):
+        """Show a downscaled PNG thumbnail (native Tk PhotoImage, no PIL)."""
+        if not png_path.exists():
+            ttk.Label(parent, text="(no image)", foreground="gray", width=22).pack(side="left")
+            return
+        try:
+            img = tk.PhotoImage(file=str(png_path))
+            # QC PNGs are ~1500px wide; subsample to ~3x smaller to fit the row.
+            factor = max(1, round(img.width() / 480))
+            if factor > 1:
+                img = img.subsample(factor, factor)
+            self._thumb_refs.append(img)   # prevent garbage collection
+            lbl = ttk.Label(parent, image=img, cursor="hand2")
+            lbl.pack(side="left")
+            lbl.bind("<Button-1>", lambda _e, p=str(png_path): self._open_image(p))
+        except Exception:
+            ttk.Button(parent, text="Open image",
+                       command=lambda p=str(png_path): self._open_image(p)).pack(side="left")
+
+    def _open_image(self, png_path: str):
+        if not os.path.isfile(png_path):
+            messagebox.showinfo("Image", f"Not found:\n{png_path}"); return
+        self._runner.run(cmd=["open", png_path], cwd=os.path.dirname(png_path),
+                         on_line=self._console.append, on_done=lambda rc: None)
+
+    def _run_piezo_report(self):
+        """Build the cohort piezo QC flag report (all subjects) via qc_snapshots.py."""
+        sd = self._cfg["sourcedata"].get().strip()
+        if not sd:
+            messagebox.showerror("Error", "Set sourcedata first."); return
+        pr = self._cfg["project_root"].get().strip() or sd
+        py = self._cfg["python_exe"].get().strip() or "python3"
+        script = str(SCRIPTS_ROOT / "utility" / "qc_snapshots.py")
+        cmd = [py, script, pr, sd, "--piezo-report"]
+        self._run_cmd(cmd, pr if os.path.isdir(pr) else "/tmp",
+                      "Piezo cohort report", "step_04_piezoreport")
+
+    def _save_decisions(self):
+        if not self._decision_rows:
+            messagebox.showinfo("Piezo QC Review", "Nothing to save — Load review first.")
+            return
+        dpath = self._decision_path()
+        if dpath is None:
+            messagebox.showerror("Error", "Set subject and preprocessed dir first."); return
+        subj = self._subj_var.get().strip()
+        ts   = datetime.datetime.now().isoformat(timespec="seconds")
+        try:
+            dpath.parent.mkdir(parents=True, exist_ok=True)
+            with open(dpath, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["subject", "task", "run", "use_cardiac",
+                            "verdict", "decided_by", "timestamp"])
+                for row in self._decision_rows:
+                    use_cardiac = 1 if row["var"].get() == "both" else 0
+                    w.writerow([subj, row["task"], row["run"], use_cardiac,
+                                row["verdict"], "user", ts])
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not write manifest:\n{e}"); return
+
+        n_resp = sum(1 for r in self._decision_rows if r["var"].get() == "resp")
+        self._console.append(
+            f"[Piezo QC] Saved {len(self._decision_rows)} decision(s) "
+            f"({n_resp} respiration-only) → {dpath}", "ok")
+        messagebox.showinfo("Piezo QC Review",
+            f"Saved {len(self._decision_rows)} decision(s) "
+            f"({n_resp} respiration-only) to:\n{dpath}\n\n"
+            "step04 Part 1 / Run All will apply these per run.")
 
     # ── Part 2: Copy BOLD ─────────────────────────────────────────────────────
 
@@ -3861,6 +4073,7 @@ class RetroicorPanel(ttk.Frame):
             f"'SMS',{self._sms_var.get()},'FS_OUT',{self._fs_var.get()},"
             f"'TR_FALLBACK',{self._tr_var.get()},"
             f"'Cardiac',{'1' if self._cardiac_var.get() == 'both' else '0'},"
+            f"{self._decision_arg()}"
             f"'SESSION','{ses}');\"\n"
             # Part 2
             f"echo '[Step 04] Part 2 — Copy BOLD ...'\n"

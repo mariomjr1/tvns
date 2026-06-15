@@ -23,6 +23,12 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
 %   FS_OUT        Output physio sampling rate Hz (default: 40)
 %   TR_FALLBACK   TR value to use if JSON sidecar not found (default: 1.19)
 %   SESSION       BIDS session label without 'ses-' (default: '01')
+%   Cardiac       Global cardiac flag: 1 = cardiac+respiration (default),
+%                 0 = respiration-only. Overridden per-run by DecisionFile.
+%   DecisionFile  Optional path to a per-run piezo-QC decision manifest CSV
+%                 (columns: subject,task,run,use_cardiac,verdict,decided_by,
+%                 timestamp) written by the GUI piezo review. When present, the
+%                 per-run use_cardiac value overrides the global Cardiac flag.
 %
 % Output files in output_dir:
 %   RETRO-resp_<bids_subject_id>_ses-<session>_task-*_run-*_bold.1D
@@ -43,6 +49,8 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     % Cardiac=1 uses R-DECO peaks for cardiac regressors; Cardiac=0 forces
     % RESPIRATION-ONLY (skip R-DECO entirely) — use when piezo QC is BAD.
     addParameter(p, 'Cardiac',     1,    @(x) isnumeric(x)&&isscalar(x));
+    % Optional per-run piezo-QC decision manifest (overrides Cardiac per run).
+    addParameter(p, 'DecisionFile', '',  @(x) ischar(x)||isstring(x));
     parse(p, input_dir, output_dir, bids_subject_id, sourcedata_dir, varargin{:});
 
     input_dir       = char(p.Results.input_dir);
@@ -54,7 +62,11 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     tr_fallback     = p.Results.TR_FALLBACK;
     session         = char(p.Results.SESSION);
     use_cardiac     = logical(p.Results.Cardiac);
+    decision_file   = char(p.Results.DecisionFile);
     sr              = 1000;   % physio sampling rate (always 1000 Hz from physioparse)
+
+    % Per-run cardiac decisions from the GUI piezo review (empty map if none).
+    decision_map = load_decision_map(decision_file);
 
     % ── Suppress figure windows (headless cluster) ────────────────────────────
     set(0, 'DefaultFigureVisible', 'off');
@@ -92,6 +104,10 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     else
         fprintf(' Cardiac:      OFF — RESPIRATION-ONLY (R-DECO skipped; bad piezo)\n');
     end
+    if decision_map.Count > 0
+        fprintf(' Decisions:    %d per-run override(s) from %s\n', ...
+                decision_map.Count, decision_file);
+    end
     fprintf(' Found:        %d filtered mat(s)\n\n', numel(mats));
 
     n_ok   = 0;
@@ -116,6 +132,13 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
         task_name = tok{1}{1};   % e.g. BlockStim
         run_num   = tok{1}{2};   % e.g. 01
 
+        % Per-run cardiac decision: a manifest entry overrides the global flag.
+        use_cardiac_run = use_cardiac;
+        dkey = sprintf('%s|%s', task_name, run_num);
+        if isKey(decision_map, dkey)
+            use_cardiac_run = decision_map(dkey);
+        end
+
         % BIDS filename base for this run
         fname_base = sprintf('%s_ses-%s_task-%s_run-%s_bold', ...
                              bids_subject_id, session, task_name, run_num);
@@ -131,7 +154,7 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
 
             % ── Load R-DECO peaks if available (and cardiac enabled) ──────────
             % stem(1:end-9) strips '_filtered'
-            if use_cardiac
+            if use_cardiac_run
                 rdeco_path = fullfile(input_dir, [stem(1:end-9) '_rdeco.mat']);
                 [piezoout, has_rdeco] = load_rdeco_optional(rdeco_path);
                 if has_rdeco
@@ -144,7 +167,11 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
             else
                 piezoout = [];
                 has_rdeco = false;
-                fprintf('  Cardiac OFF — respiration-only (R-DECO skipped)\n');
+                if isKey(decision_map, dkey)
+                    fprintf('  [PIEZO-SKIP] manifest decision: respiration-only (R-DECO skipped)\n');
+                else
+                    fprintf('  Cardiac OFF — respiration-only (R-DECO skipped)\n');
+                end
             end
 
             % ── Read TR from BIDS JSON sidecar ────────────────────────────────
@@ -205,10 +232,52 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     fprintf(' Done.  OK: %d  |  Failed: %d\n', n_ok, n_fail);
     fprintf(' 1D files in: %s\n', output_dir);
     fprintf('========================================\n\n');
+
+    % ── Fail-fast (Task 31) ───────────────────────────────────────────────────
+    % A failed run leaves a BOLD without its 1D regressors, so RETROICOR would
+    % silently run uncorrected on it. Throw so MATLAB -batch returns non-zero and
+    % step04 aborts rather than proceeding on incomplete physio.
+    if n_fail > 0
+        error('preproc_generate_1D_v2:failures', ...
+              '%d of %d sequence(s) FAILED 1D generation (see log above). Aborting.', ...
+              n_fail, numel(mats));
+    end
 end
 
 
 % ── Helpers ───────────────────────────────────────────────────────────────────
+
+function m = load_decision_map(decision_file)
+% Load per-run cardiac decisions from a GUI-written manifest CSV.
+% Columns (header required): subject,task,run,use_cardiac,verdict,decided_by,timestamp
+% Returns a containers.Map keyed 'task|run' -> logical(use_cardiac); empty if no file.
+
+    m = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    if isempty(decision_file) || ~exist(decision_file, 'file')
+        return;
+    end
+    try
+        T = readtable(decision_file, 'Delimiter', ',', 'TextType', 'char');
+    catch ME
+        warning('Could not read decision manifest %s: %s', decision_file, ME.message);
+        return;
+    end
+    vn = T.Properties.VariableNames;
+    if ~all(ismember({'task', 'run', 'use_cardiac'}, vn))
+        warning('Decision manifest missing task/run/use_cardiac columns: %s', decision_file);
+        return;
+    end
+    for i = 1:height(T)
+        task = char(string(T.task(i)));
+        run  = char(string(T.run(i)));
+        rnum = str2double(run);             % normalise run to 2-digit ('01')
+        if ~isnan(rnum), run = sprintf('%02d', rnum); end
+        uc = T.use_cardiac(i);
+        if iscell(uc), uc = uc{1}; end
+        m(sprintf('%s|%s', task, run)) = logical(str2double(string(uc)));
+    end
+    fprintf(' Loaded %d cardiac decision(s) from %s\n', m.Count, decision_file);
+end
 
 function [piezoout, found] = load_rdeco_optional(rdeco_path)
 % Load R-DECO output and return R-peak times in seconds.

@@ -63,13 +63,21 @@ derivatives/physio/<subj>/preprocessed/
 ## 7. QC / verification
 - Inspect the R-DECO QC image / GUI overlay — every true R-peak marked once, no
   doubled beats, no ectopics misfired.
-- Confirm one `*_rdeco.mat` exists per run before Step 05 (Step 05 can run
+- Confirm one `*_rdeco.mat` exists per run before Step 04 (Step 04 can run
   respiration-only without it, but cardiac regressors will be omitted).
+- **Channel validation (fail-fast):** filtering validates channel *content*, not
+  just presence — a flat (zero-variance) `RESP` is a fatal error, a flat `RPIEZO`
+  warns (use respiration-only), and `MRTRIG` with no rising edges warns. `RESP` is
+  mean-centered (DC offset removed) before regressor generation. If any sequence
+  fails, the step aborts (non-zero exit) instead of writing partial physio.
 
 ## 8. Troubleshooting
 | Symptom | Cause / fix |
 |---------|-------------|
-| `No task-*_run-*.mat files found` | Run Step 03 first. |
+| `No task-*_run-*.mat files found` | Run Step 02 (physioparse) first. |
+| `RESP channel is empty or flat` | The respiratory channel was not recorded / saturated — re-check the LabChart export; this run cannot produce respiratory regressors. |
+| `WARNING: RPIEZO is flat` | Piezo not recorded — route this run to respiration-only in the Step 04 Piezo QC Review. |
+| `N of M sequence(s) FAILED filtering` | Step aborts by design; fix the offending segment(s) and re-run. |
 | MATLAB hangs on cluster | Figures are suppressed (`DefaultFigureVisible off`); use the automated R-DECO path for headless runs. |
 | Poor peak detection | Adjust bandpass (`bp_low`/`bp_high`) for the piezo signal, re-filter, re-run R-DECO. |
 
