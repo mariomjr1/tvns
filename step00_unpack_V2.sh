@@ -18,8 +18,11 @@
 # NOTE: Runs on the linux workstation (needs findsession + screen + rsync).
 #
 # Usage:
-#   bash step00_unpack_V2.sh
-#   bash step00_unpack_V2.sh /path/to/CustomSubjectList.txt
+#   bash step00_unpack_V2.sh [subject_list] <out_path> [screen|foreground]
+#     subject_list  one ID per line   (default: <script_dir>/utility/SubjectList.txt)
+#     out_path      rawdata output    (REQUIRED — no hardcoded default)
+#     mode          screen (default, detached parallel) | foreground (sequential,
+#                   streams output — used by the GUI)
 ##################################################################################
 
 echo -e " by Mario Murakami"
@@ -28,14 +31,20 @@ echo -e " Date:\t $(date)\n"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-out_path=/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/rawdata
-
-# Allow passing a custom subject list as first argument
+# ── Arguments (no hardcoded paths) ──────────────────────────────────────────────
 subjlist=${1:-"${SCRIPT_DIR}/utility/SubjectList.txt"}
+out_path="$2"
+mode="${3:-screen}"
+
+if [ -z "${out_path}" ]; then
+    echo "ERROR: output path (arg 2) is required — no hardcoded default."
+    echo "Usage: $0 [subject_list] <out_path> [screen|foreground]"
+    exit 1
+fi
 
 echo -e " Subject list: ${subjlist}"
-echo -e " Output path:  ${out_path}\n"
+echo -e " Output path:  ${out_path}"
+echo -e " Mode:         ${mode}\n"
 
 if [ ! -f "${subjlist}" ]; then
     echo "ERROR: subject list not found: ${subjlist}"
@@ -116,14 +125,24 @@ exit 0
 HELPER
 chmod +x "${helper}"
 
-# ── Spawn one screen session per subject ────────────────────────────────────────
-while IFS= read -r subjID; do
-    [ -z "${subjID}" ] && continue
-    echo " Spawning screen session for: ${subjID}"
-    screen -S "${subjID}-download" -dm bash "${helper}" "${subjID}" "${out_path}"
-done < "${subjlist}"
-
-echo -e "\n All screen sessions spawned."
-echo -e " Monitor  : screen -ls"
-echo -e " Attach   : screen -r <subjID>-download"
-echo -e " (helper:  ${helper})"
+# ── Run per subject ─────────────────────────────────────────────────────────────
+# foreground: sequential in this shell (caller streams output, e.g. the GUI).
+# screen:     one detached screen session per subject (parallel, standalone use).
+if [ "${mode}" = "foreground" ]; then
+    while IFS= read -r subjID; do
+        [ -z "${subjID}" ] && continue
+        bash "${helper}" "${subjID}" "${out_path}"
+    done < "${subjlist}"
+    rm -f "${helper}"
+    echo -e "\n Step 00 finished (foreground)."
+else
+    while IFS= read -r subjID; do
+        [ -z "${subjID}" ] && continue
+        echo " Spawning screen session for: ${subjID}"
+        screen -S "${subjID}-download" -dm bash "${helper}" "${subjID}" "${out_path}"
+    done < "${subjlist}"
+    echo -e "\n All screen sessions spawned."
+    echo -e " Monitor  : screen -ls"
+    echo -e " Attach   : screen -r <subjID>-download"
+    echo -e " (helper:  ${helper})"
+fi

@@ -454,80 +454,8 @@ class SetupPanel(ttk.Frame):
 #   - runs findsession and collects ALL DICOM PATHs (one subject ID may map to
 #     several sessions → each goes to its own folder: raw, or raw_01/raw_02/…)
 #   - skips subjects/paths with no access (and keeps going — never aborts)
-_STEP00_TEMPLATE = r"""
-out_path='__OUT_PATH__'
-
-download_one() {
-    subj="$1"
-    subj_dir="${out_path}/${subj}"
-    log_dir="${subj_dir}/DICOM/LOG"
-    echo '============================================'
-    echo " Subject : ${subj}"
-    echo " Started : $(date)"
-    echo '============================================'
-    mkdir -p "${log_dir}"
-
-    # Skip if already downloaded
-    if [ -f "${log_dir}/step0_DONE.txt" ]; then
-        echo " [SKIP] already downloaded (step0_DONE.txt present)"
-        return 0
-    fi
-
-    fs_out=$(findsession "${subj}" 2>&1)
-    echo "${fs_out}" > "${log_dir}/findsession.txt"
-
-    # Collect every DICOM PATH (a subject ID may have multiple sessions)
-    paths=()
-    while IFS= read -r line; do
-        [ -n "$line" ] && paths+=("$line")
-    done < <(echo "${fs_out}" | grep '^PATH' | awk '{print $NF}')
-
-    n=${#paths[@]}
-    if [ "$n" -eq 0 ]; then
-        echo " [SKIP] no DICOM path / no access for ${subj}"
-        date > "${log_dir}/step0_ERROR.txt"
-        return 0
-    fi
-
-    idx=0; ok=0
-    for src in "${paths[@]}"; do
-        idx=$((idx+1))
-        nn=$(printf '%02d' "$idx")
-        if [ "$n" -eq 1 ]; then
-            dest="${subj_dir}/DICOM/raw"
-        else
-            dest="${subj_dir}/DICOM/raw_${nn}"   # multiple sessions → one folder each
-        fi
-        if [ ! -d "$src" ] || [ ! -r "$src" ]; then
-            echo " [SKIP] no access to session ${nn}: ${src}"
-            continue
-        fi
-        echo " DICOM source [${idx}/${n}]: ${src}"
-        echo "   -> ${dest}"
-        mkdir -p "${dest}"
-        rsync -av --progress "${src}/" "${dest}/" 2>&1 | tee "${log_dir}/rsync_${nn}.log"
-        if [ "${PIPESTATUS[0]}" -eq 0 ]; then
-            ok=$((ok+1))
-        else
-            echo " [WARN] rsync failed for session ${nn}"
-        fi
-    done
-
-    if [ "$ok" -gt 0 ]; then
-        date > "${log_dir}/step0_DONE.txt"
-        echo " Done: ${subj} (${ok}/${n} session(s) copied)"
-    else
-        date > "${log_dir}/step0_ERROR.txt"
-        echo " [FAIL] no accessible sessions for ${subj}"
-    fi
-    return 0
-}
-
-for subj in __SUBJECTS__; do
-    download_one "${subj}"
-done
-echo "Step 00 finished."
-"""
+# Step 00 (DICOM download) now runs via step00_unpack_V2.sh in foreground mode —
+# see DownloadPanel._run. (No inline bash in the GUI — Task 36.)
 
 
 class DownloadPanel(ttk.Frame):
@@ -616,13 +544,19 @@ class DownloadPanel(ttk.Frame):
             messagebox.showerror("Error", "No subjects found. Check SubjectList.txt.")
             return
 
-        # Build a robust script: multiple sessions per ID → separate folders,
-        # skip inaccessible / already-downloaded subjects, never abort the run.
-        subj_list = " ".join(f"'{s}'" for s in subjects)
-        script = (_STEP00_TEMPLATE
-                  .replace("__OUT_PATH__", out_path)
-                  .replace("__SUBJECTS__", subj_list))
-        cmd = ["bash", "-c", script]
+        script = SCRIPTS_ROOT / "step00_unpack_V2.sh"
+        if not script.is_file():
+            messagebox.showerror("Error", f"Script not found:\n{script}")
+            return
+
+        # Write the selected subjects to a temp list and call the .sh in foreground
+        # mode (sequential, streams output). No inline bash in the GUI.
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix="_step00_subjects.txt", delete=False)
+        tmp.write("\n".join(subjects) + "\n")
+        tmp.close()
+        self._tmp_subjlist = tmp.name
+        cmd = ["bash", str(script), tmp.name, out_path, "foreground"]
 
         self._last_subjects = subjects
         if self._state:
@@ -647,6 +581,12 @@ class DownloadPanel(ttk.Frame):
         self._progress.stop()
         self._run_btn.config(state="normal")
         self._stop_btn.config(state="disabled")
+        tmp = getattr(self, "_tmp_subjlist", "")
+        if tmp and os.path.isfile(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
         if rc == 0:
             self._status.set("Step 00 complete ✓")
             self._console.append("[Step 00] Finished successfully.", "ok")
