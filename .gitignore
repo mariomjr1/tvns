@@ -16,6 +16,9 @@ heuristic_warnings.log
 # Protocol samples / dicominfo exports — may contain subject identifiers; keep local
 docs/protocols/
 
+# Methodology write-up — kept local
+methodology.md
+
 # Agent tasks and Claude config
 agents/
 .claude/
