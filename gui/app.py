@@ -4746,7 +4746,7 @@ class FirstLevelPanel(ttk.Frame):
         self._do_mni       = tk.BooleanVar(value=True)
         self._use_sourcedata = tk.BooleanVar(value=False)
         self._warp_only    = tk.BooleanVar(value=False)
-        self._space_var    = tk.StringVar(value="T1w")   # T1w | MNI | both (Task 06)
+        self._space_var    = tk.StringVar(value="MNI")   # MNI (default) | T1w (legacy) | both (Task 06)
         self._restrict_bs  = tk.BooleanVar(value=False)   # restrict GLM to brainstem (Task 05 C2)
         self._bs_mask_var  = cfg["brainstem_mask"]        # shared brainstem mask path
         self._bs_smooth_var = tk.StringVar(value="")      # optional brainstem smoothing (mm)
@@ -4760,7 +4760,8 @@ class FirstLevelPanel(ttk.Frame):
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
-            text=("First-level SPM GLM in native T1w space, then warp contrasts to MNI.\n"
+            text=("First-level SPM GLM. Default models the direct fMRIPrep MNI BOLD "
+                  "(no SPM renormalisation); the T1w + SPM-warp path is optional legacy.\n"
                   "Masks + BOLDs are LOCATED in derivatives/fmriprep (not copied).\n"
                   "Stim onsets + motion regressors come from the step06 first_level folder."),
             foreground="gray", wraplength=600,
@@ -4815,14 +4816,15 @@ class FirstLevelPanel(ttk.Frame):
         spr = ttk.Frame(pm); spr.pack(fill="x", pady=(4, 0))
         ttk.Label(spr, text="First-level space:").pack(side="left")
         ttk.Combobox(spr, textvariable=self._space_var, width=7, state="readonly",
-                     values=["T1w", "MNI", "both"]).pack(side="left", padx=(4, 0))
+                     values=["MNI", "T1w", "both"]).pack(side="left", padx=(4, 0))
         ttk.Label(pm, foreground="gray", wraplength=560,
-                  text=("'T1w' models the fMRIPrep T1w BOLD (con in T1w; optional SPM warp below). "
-                        "'MNI' models the fMRIPrep MNI BOLD directly (con already MNI → wcon_*, no "
-                        "SPM warp). 'both' does T1w in <subj>/<task> and MNI in <subj>/<task>/mni.")
+                  text=("'MNI' (default) models the fMRIPrep MNI BOLD directly (con already MNI → "
+                        "wcon_*, no SPM warp). 'T1w' (optional legacy) models the fMRIPrep T1w BOLD "
+                        "(con in T1w; optional SPM warp below — double-normalisation). 'both' does "
+                        "T1w in <subj>/<task> and MNI in <subj>/<task>/mni.")
                   ).pack(anchor="w")
 
-        ttk.Checkbutton(pm, text="Warp T1w contrasts to MNI (segment T1 → wcon_*.nii; only for T1w space)",
+        ttk.Checkbutton(pm, text="Warp T1w contrasts to MNI (segment T1 → wcon_*.nii; legacy, only for T1w space)",
                         variable=self._do_mni).pack(anchor="w", pady=(4, 0))
 
         # ── Brainstem restriction (Task 05 C2) ───────────────────────────────

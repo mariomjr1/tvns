@@ -4,7 +4,9 @@
 # step07_firstlevel_mni_v2.sh
 # Created by Mario Murakami
 #
-# First-level SPM GLM in native T1w space + warp contrasts to MNI.
+# First-level SPM GLM. DEFAULT: model the fMRIPrep MNI152NLin2009cAsym BOLD
+# directly (con already in MNI; no SPM renormalisation). OPTIONAL LEGACY: model
+# the native T1w BOLD and SPM unified-seg warp contrasts to MNI (DoMNI).
 # Replaces the old step21 (copy masks) + step22 (first level) + step23 (MNI).
 #
 # KEY CHANGE: masks and BOLDs are LOCATED in place inside derivatives/fmriprep
@@ -70,8 +72,11 @@ DO_MNI="${12:-1}"
 ENV_SCRIPT="${13:-${SCRIPT_DIR}/utility/fmriprep_env.sh}"
 WARP_ONLY="${14:-0}"
 USE_SOURCEDATA="${15:-0}"
-# Space to model the first level in (Task 06): T1w | MNI | both
-SPACE="${16:-T1w}"
+# Space to model the first level in (Task 06): MNI | T1w | both
+# Default MNI: model the fMRIPrep MNI152NLin2009cAsym BOLD directly (con already in
+# MNI → wcon_*, no SPM segment-normalisation). 'T1w' is the optional legacy path
+# (model the T1w BOLD; if DoMNI=1, SPM unified-seg warps con→MNI — double-norm).
+SPACE="${16:-MNI}"
 # Brainstem restriction (Task 05 C2): optional explicit mask = brainstem ∩ brain
 RESTRICT_BS="${17:-0}"            # 1 = restrict GLM to the brainstem mask
 BRAINSTEM_MASK="${18:-}"         # brainstem_mask.nii (must match the modeling space)
@@ -94,7 +99,7 @@ echo " SPM:           ${SPM_DIR}"
 echo " Env script:    ${ENV_SCRIPT}"
 echo " TR=${TR}  Smooth=${SMOOTH}mm  Session=ses-${SESSION}  DoMNI=${DO_MNI}  WarpOnly=${WARP_ONLY}  UseSourcedata=${USE_SOURCEDATA}"
 echo " GLM nuisance: motion + FD spikes only (physio removed pre-fMRIPrep by RETROICOR)"
-echo " First-level space: ${SPACE}  (T1w warp to MNI: DoMNI=${DO_MNI})"
+echo " First-level space: ${SPACE}  (default MNI = direct fMRIPrep MNI BOLD; T1w+SPM warp DoMNI=${DO_MNI} is optional legacy)"
 echo " Restrict to brainstem: ${RESTRICT_BS}  mask: ${BRAINSTEM_MASK:-(none)}  bs-smooth: ${BRAINSTEM_SMOOTH:-(default)}"
 echo " Date:          $(date)"
 echo "============================================"

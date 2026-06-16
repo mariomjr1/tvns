@@ -1,7 +1,10 @@
 function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
         firstlevel_dir, output_dir, spm_dir, varargin)
 % GLM_SPM_FIRSTLEVEL_MNI_V2
-% First-level SPM GLM in native T1w space, then warp contrasts to MNI.
+% First-level SPM GLM. DEFAULT (Space='MNI'): model the fMRIPrep
+% MNI152NLin2009cAsym BOLD directly (con already in MNI; no SPM renormalisation).
+% OPTIONAL LEGACY (Space='T1w'): model the native T1w BOLD, then SPM unified-seg
+% warp contrasts to MNI (DoMNI).
 %
 % Differences from the old step21+22+23 chain:
 %   - Masks and BOLDs are LOCATED in place inside derivatives/fmriprep
@@ -13,8 +16,9 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 %   glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 %       firstlevel_dir, output_dir, spm_dir)
 %   glm_spm_firstlevel_mni_v2(..., 'TR',1.19, 'Tasks',{'BlockStim','ContinuousStim'}, ...
-%       'Session','01', 'Run','01', 'SmoothFWHM',[3 3 3], 'DoMNI',true, ...
-%       'MNIRef','', 'SmoothPrefix','s3', 'WarpOnly',false, 'SourceData','')
+%       'Session','01', 'Run','01', 'SmoothFWHM',[3 3 3], 'Space','MNI', ...
+%       'DoMNI',true, 'MNIRef','', 'SmoothPrefix','s3', 'WarpOnly',false, ...
+%       'SourceData','')
 %
 % Required:
 %   subject_list_file  text file, one BIDS subject per line (sub-XXXX...)
@@ -34,7 +38,10 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
 %   Run           BIDS run, no 'run-' (default '01')
 %   SmoothFWHM    [x y z] mm (default [3 3 3])
 %   SmoothPrefix  string (default 's3')
-%   DoMNI         logical — also warp contrasts to MNI (default true)
+%   Space         'MNI' | 'T1w' | 'both' (default 'MNI' — direct fMRIPrep MNI BOLD;
+%                 'T1w' is the optional legacy T1w + SPM-warp path)
+%   DoMNI         logical — for Space='T1w' only: SPM unified-seg warp con→MNI
+%                 (legacy double-normalisation toggle; default true)
 %   MNIRef        MNI reference image; '' uses spm canonical avg152T1 (default '')
 %   WarpOnly      logical — skip GLM, only warp existing con_*.nii to MNI (default false)
 %   SourceData    sourcedata root dir; if provided, look for stim in sourcedata/derivatives/physio/<subj>/stimtrigger/
@@ -65,11 +72,12 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     addParameter(p, 'WarpOnly',     false, @(x) islogical(x)||isnumeric(x));
     addParameter(p, 'SourceData',   '',    @(x) ischar(x)||isstring(x));
     % Space to model the first level in (Task 06):
-    %   'T1w'  — fMRIPrep T1w BOLD (con in T1w; optional SPM warp→MNI via DoMNI). Default.
     %   'MNI'  — fMRIPrep MNI152NLin2009cAsym BOLD directly (con already in MNI → copied
-    %            to wcon_*; NO SPM segment-normalisation).
+    %            to wcon_*; NO SPM segment-normalisation). Default (preferred path).
+    %   'T1w'  — fMRIPrep T1w BOLD (con in T1w; optional SPM warp→MNI via DoMNI).
+    %            Optional legacy double-normalisation path.
     %   'both' — run T1w (in <subj>/<task>) AND MNI (in <subj>/<task>/mni).
-    addParameter(p, 'Space',        'T1w', @(x) ischar(x)||isstring(x));
+    addParameter(p, 'Space',        'MNI', @(x) ischar(x)||isstring(x));
     % Brainstem restriction (Task 05 C2): explicit GLM mask = brainstem ∩ fMRIPrep
     % brain mask. Optional (default off). The brainstem mask must be in the SAME
     % space as the modeling (use Space='MNI' with an MNI brainstem mask).

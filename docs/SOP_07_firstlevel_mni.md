@@ -7,10 +7,13 @@
 ---
 
 ## 1. Purpose
-Run a first-level GLM **in native T1w space** on the fMRIPrep BOLD with the Stim
-condition plus motion (and RETROICOR) nuisance regressors, build Stim contrasts,
-then warp the contrasts to MNI (`wcon_*.nii`). Masks and BOLDs are **located in
-place** in `derivatives/fmriprep/` — there is no copy step.
+Run a first-level GLM with the Stim condition plus motion (and RETROICOR) nuisance
+regressors and build Stim contrasts. **By default** the GLM models the **direct
+fMRIPrep MNI152NLin2009cAsym BOLD** (`space=MNI`): contrasts are already in MNI
+(`con_*` copied to `wcon_*`) with **no SPM renormalisation**. The legacy **native
+T1w + SPM unified-segmentation warp** path (`space=T1w`, `do_mni=1`) remains
+available as an optional sensitivity/comparison route. Masks and BOLDs are
+**located in place** in `derivatives/fmriprep/` — there is no copy step.
 
 ## 2. Prerequisites
 - Step 02 (fMRIPrep T1w BOLD + brain mask) and Step 06 (`first_level/` inputs).
@@ -31,35 +34,42 @@ step07_firstlevel_mni_v2.sh \
 | `output_dir` | GLM output root | `derivatives/spm/first_level` |
 | `tr` | TR (s) | `1.19` |
 | `smooth_fwhm` | smoothing (mm, isotropic) | `3` |
-| `do_mni` | 1 = SPM-warp the **T1w** con to MNI (`wcon_*.nii`) | `1` |
+| `do_mni` | 1 = SPM-warp the **T1w** con to MNI (`wcon_*.nii`); legacy `space=T1w` only | `1` |
 | `warp_only` | 1 = warp existing con, skip GLM | `0` |
 | `use_sourcedata` | 1 = read stim from `…/stimtrigger/` | `0` |
-| `space` (arg 16) | first-level space: `T1w` / `MNI` / `both` | `T1w` |
+| `space` (arg 16) | first-level space: `MNI` / `T1w` / `both` | `MNI` |
 
 > **First-level space (Task 06).** Choose where the GLM is modeled:
-> - **`T1w`** (default): model the fMRIPrep T1w BOLD → `con_*.nii` (native); if `do_mni=1`,
->   SPM segments the T1 and warps them to `wcon_*.nii` (MNI). This is the original behavior.
-> - **`MNI`**: model the fMRIPrep **MNI152NLin2009cAsym** BOLD directly (now physio-clean, since
->   fMRIPrep ran on the RETROICOR-corrected data). The `con_*.nii` are **already in MNI** and are
->   copied to `wcon_*.nii` for the group step — **no SPM segment-normalisation** (avoids the
->   weaker/inconsistent re-normalisation). `do_mni` is ignored for this space.
+> - **`MNI`** (default, preferred): model the fMRIPrep **MNI152NLin2009cAsym** BOLD directly
+>   (physio-clean, since fMRIPrep ran on the RETROICOR-corrected data). The `con_*.nii` are
+>   **already in MNI** and are copied to `wcon_*.nii` for the group step — **no SPM
+>   segment-normalisation** (avoids the weaker/inconsistent double-normalisation). `do_mni` is
+>   ignored for this space.
+> - **`T1w`** (optional legacy): model the fMRIPrep T1w BOLD → `con_*.nii` (native); if `do_mni=1`,
+>   SPM segments the T1 and warps them to `wcon_*.nii` (MNI). This is the original
+>   double-normalisation route, kept for sensitivity/comparison.
 > - **`both`**: T1w in `<subj>/<task>/` (con + optional warped wcon) **and** MNI in
 >   `<subj>/<task>/mni/` (con + wcon). Lets you compare the two normalisation routes.
 >
-> The SPM T1w→MNI warp remains **optional** (`do_mni`); the per-task `wcon_0001.nii` that
-> Step 08 consumes is produced by whichever route you pick.
+> The SPM T1w→MNI warp is **optional** (`do_mni`, legacy `space=T1w`); the per-task
+> `wcon_0001.nii` that Step 08 consumes is produced by whichever route you pick.
 
 ## 4. Run
 ```bash
-# Full GLM + MNI warp for all subjects:
+# Default: GLM on the direct fMRIPrep MNI BOLD for all subjects:
 bash step07_firstlevel_mni_v2.sh
 
-# Warp-only over the whole step07 tree (skip GLM):
+# Legacy T1w + SPM-warp route (arg 16 = T1w, do_mni stays 1):
+bash step07_firstlevel_mni_v2.sh "" "" "" "" "" matlab "" 01 01 1.19 3 1 "" 0 0 T1w
+
+# Warp-only over the whole step07 tree (skip GLM; legacy T1w route):
 bash step07_firstlevel_mni_v2.sh "" "" "" "" "" matlab "" 01 01 1.19 3 1 "" 1
 ```
-Per subject × task the MATLAB function: locates T1w BOLD + brain mask → smooths
-BOLD, reslices mask → specifies + estimates GLM → builds contrasts → segments T1
-→ warps `con_*.nii` to `wcon_*.nii`.
+Per subject × task the MATLAB function locates the BOLD + brain mask → smooths
+BOLD, reslices mask → specifies + estimates GLM → builds contrasts. In the default
+**MNI** route the `con_*.nii` are already in MNI and are copied to `wcon_*.nii`
+(no warp). In the legacy **T1w** route it additionally segments the T1 and warps
+`con_*.nii` to `wcon_*.nii`.
 
 ## 5. Outputs
 ```
