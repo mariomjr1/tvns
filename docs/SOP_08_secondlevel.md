@@ -102,6 +102,13 @@ step08_secondlevel_v2.sh <block_dir> <continuous_dir> <rest_dir> <output_dir> \
 - Confirm each task folder has the expected subject count (`_subjects.txt`).
 - Verify cases/controls lists match enrolled subjects; no subject in both.
 - Inspect `spmT_000*.nii` in SPM for each contrast.
+- **Contrast identity (Task 27):** Part 1 copies `con_name` (default `wcon_0001.nii`,
+  index 1) and verifies it against each subject's `SPM.mat` `xCon(1).name`
+  (expected `Stim > baseline`, set via `ExpectedConName`). Mismatches are written to
+  `<group_out>/_contrast_check.csv` with a `[FLAG]` line — the subject is **copied
+  anyway, never skipped** (flag + log). **Review `_contrast_check.csv` for any status
+  ≠ OK before trusting group stats** (a `MISMATCH` means a different contrast, e.g.
+  if a pmod GLM reordered contrasts).
 
 ## Troubleshooting
 | Symptom | Cause / fix |
