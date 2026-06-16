@@ -65,6 +65,13 @@ derivatives/fmriprep/qc_fd_summary.json  (FD + registration QC)
 - Review the pre/post GIFs in `figures/`.
 - Check `qc_fd_summary.json`: subjects with **mean FD > 0.9 mm** are flagged;
   any subject "missing MNI BOLD" indicates a registration/normalisation failure.
+- **SDC verification (Task 16):** QC panel → **"SDC audit"** (or
+  `utility/audit_sdc.py <derivatives/fmriprep> --all --bids <sourcedata>`). Per BOLD
+  run it confirms SDC was *applied* (not just that an AP/PA fieldmap exists) via the
+  `*desc-sdc*.svg` figure / report / sidecar, and flags `FMAP_BUT_NO_SDC`,
+  `NO_FIELDMAP`, or `UNKNOWN` → `codes/qc/group_sdc_audit.{csv,md}`. Flag + log only —
+  never blocks. The AP/PA TOPUP pair is pulled into `fmap/` as `dir-AP/dir-PA_epi`
+  by the heuristic (PEPOLAR), with `IntendedFor` auto-populated for SDC.
 
 ## 8. Provenance (Task 29)
 Before generating pilot outputs, capture the analysis environment so a scanner/
