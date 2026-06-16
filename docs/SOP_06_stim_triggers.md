@@ -57,7 +57,11 @@ bash step06_stim_v2.sh sub-7T1019HC042726 "" "" "" "" "" 01 1.5 1.5 python3 1
 - **Part 3** (optional) — assembles the **shared** first-level folder
   (named per-subject so all subjects coexist):
   - `01_stim_onsets/` ← stim `.txt`
-  - `02_motion_regressors/` ← fMRIPrep `*_motion_regressors.txt`
+  - `02_motion_regressors/` ← `*_motion_regressors.txt` generated from the fMRIPrep
+    confounds. **Minimal model by design (Task 19): 6 rigid-body params + one FD
+    spike regressor per high-motion volume — no derivatives, no aCompCor, no
+    non-steady-state regressors** (deliberately not overspecified for this pilot;
+    one row per BOLD volume). `--no-spikes` writes rigid-only.
   - `03_retroicor_regressors/` ← `*_retro-regressors.mat`
   - `04_bolds/` ← `*_space-T1w_desc-preproc_bold.nii.gz`
 - **Part 4** — optional QC plots (STIMTRIG + detected onsets) with `--qc`.
