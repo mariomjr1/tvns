@@ -65,6 +65,9 @@ derivatives/fmriprep/qc_fd_summary.json  (FD + registration QC)
 - Review the pre/post GIFs in `figures/`.
 - Check `qc_fd_summary.json`: subjects with **mean FD > 0.9 mm** are flagged;
   any subject "missing MNI BOLD" indicates a registration/normalisation failure.
+  **Flag only — no automated motion exclusion** (decision, preliminary data): the
+  flag is advisory; high-motion volumes are censored within the GLM by FD spike
+  regressors (Step 06), and no subject/run is dropped for motion.
 - **SDC verification (Task 16):** QC panel → **"SDC audit"** (or
   `utility/audit_sdc.py <derivatives/fmriprep> --all --bids <sourcedata>`). Per BOLD
   run it confirms SDC was *applied* (not just that an AP/PA fieldmap exists) via the
