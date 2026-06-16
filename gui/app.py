@@ -3877,47 +3877,48 @@ class RetroicorPanel(ttk.Frame):
 
     # ── Part 1: Generate 1D ───────────────────────────────────────────────────
 
+    def _step04_cmd(self, part):
+        """Build the step04_retroicor_v2.sh command for one part (Task 36).
+        Args mirror the .sh positional order; the GUI passes all paths (no inline)."""
+        dpath = self._decision_path()
+        decision = str(dpath) if (dpath and dpath.exists()) else ""
+        return [
+            "bash", str(SCRIPTS_ROOT / "step04_retroicor_v2.sh"),
+            self._subj_var.get().strip(),
+            self._cfg["sourcedata"].get().strip(),
+            self._preproc_var.get().strip(),
+            self._input_var.get().strip(),
+            self._output_var.get().strip(),
+            self._matlab_var.get().strip(),
+            self._mcode_var.get().strip(),
+            self._retro_var.get().strip(),
+            self._session_var.get().strip(),
+            self._sms_var.get().strip(),
+            self._fs_var.get().strip(),
+            self._tr_var.get().strip(),
+            "1" if self._cardiac_var.get() == "both" else "0",
+            decision,
+            part,
+        ]
+
     def _run_part1(self):
         try:
-            subj, preproc = self._validate()
+            self._validate()
         except ValueError as e:
             messagebox.showerror("Error", str(e)); return
-
-        inp   = self._input_var.get().strip()
+        inp = self._input_var.get().strip()
         Path(inp).mkdir(parents=True, exist_ok=True)
-        sd    = self._cfg["sourcedata"].get().strip()
-        mcode = self._mcode_var.get().strip()
-
-        card = "1" if self._cardiac_var.get() == "both" else "0"
-        matlab_cmd = (
-            f"set(0,'DefaultFigureVisible','off');"
-            f"addpath('{mcode}');"
-            f"preproc_generate_1D_v2("
-            f"'{preproc}','{inp}','{subj}','{sd}',"
-            f"'SMS',{self._sms_var.get()},"
-            f"'FS_OUT',{self._fs_var.get()},"
-            f"'TR_FALLBACK',{self._tr_var.get()},"
-            f"'Cardiac',{card},"
-            f"{self._decision_arg()}"
-            f"'SESSION','{self._session_var.get()}');"
-        )
-        self._run_matlab(matlab_cmd, inp, "Part 1 — Generate 1D", "step_04_p1")
+        self._run_cmd(self._step04_cmd("p1"), inp, "Part 1 — Generate 1D", "step_04_p1")
 
     # ── Cardiac (piezo) QC ────────────────────────────────────────────────────
 
     def _run_cardiac_qc(self):
         try:
-            subj, preproc = self._validate()
+            _subj, preproc = self._validate()
         except ValueError as e:
             messagebox.showerror("Error", str(e)); return
-        mcode  = self._mcode_var.get().strip()
-        qc_dir = str(Path(preproc).parent / "cardiac_qc")
-        matlab_cmd = (
-            f"set(0,'DefaultFigureVisible','off');"
-            f"addpath('{mcode}');"
-            f"cardiac_qc('{preproc}','{subj}','{qc_dir}');"
-        )
-        self._run_matlab(matlab_cmd, preproc, "Cardiac QC", "step_04_cardiacqc")
+        self._run_cmd(self._step04_cmd("cardiacqc"), preproc,
+                      "Cardiac QC", "step_04_cardiacqc")
 
     def _open_cardiac_qc(self):
         preproc = self._preproc_var.get().strip()
@@ -4131,96 +4132,35 @@ class RetroicorPanel(ttk.Frame):
 
     def _run_part2(self):
         try:
-            subj, _ = self._validate()
+            self._validate()
         except ValueError as e:
             messagebox.showerror("Error", str(e)); return
-
-        sd      = self._cfg["sourcedata"].get().strip()
-        ses     = self._session_var.get().strip()
-        inp     = self._input_var.get().strip()
-        func_dir = str(Path(sd) / subj / f"ses-{ses}" / "func")
-
-        if not os.path.isdir(func_dir):
-            messagebox.showerror("Error", f"BIDS func dir not found:\n{func_dir}"); return
-
+        inp = self._input_var.get().strip()
         Path(inp).mkdir(parents=True, exist_ok=True)
-
-        script = (
-            f"set -euo pipefail\n"
-            f"find '{func_dir}' -maxdepth 1 -name '*_bold.nii.gz' -exec cp -n {{}} '{inp}/' \\;\n"
-            f"find '{func_dir}' -maxdepth 1 -name '*_bold.json'   -exec cp -n {{}} '{inp}/' \\;\n"
-            f"echo 'Copied BOLDs and JSONs.'"
-        )
-        self._run_cmd(["bash", "-c", script], inp, "Part 2 — Copy BOLD", "step_04_p2")
+        self._run_cmd(self._step04_cmd("p2"), inp, "Part 2 — Copy BOLD", "step_04_p2")
 
     # ── Part 3: RETROICOR ─────────────────────────────────────────────────────
 
     def _run_part3(self):
         try:
-            subj, _ = self._validate()
+            self._validate()
         except ValueError as e:
             messagebox.showerror("Error", str(e)); return
-
-        inp   = self._input_var.get().strip()
-        out   = self._output_var.get().strip()
-        mcode = self._mcode_var.get().strip()
-        rcode = self._retro_var.get().strip()
-
-        Path(out).mkdir(parents=True, exist_ok=True)
-
-        matlab_cmd = (
-            f"set(0,'DefaultFigureVisible','off');"
-            f"addpath('{mcode}');addpath('{rcode}');"
-            f"retroicor_batch('{inp}','{out}','{rcode}');"
-        )
-        self._run_matlab(matlab_cmd, inp, "Part 3 — RETROICOR", "step_04_p3")
+        Path(self._output_var.get().strip()).mkdir(parents=True, exist_ok=True)
+        self._run_cmd(self._step04_cmd("p3"), self._input_var.get().strip(),
+                      "Part 3 — RETROICOR", "step_04_p3")
 
     # ── Run All ───────────────────────────────────────────────────────────────
 
     def _run_all(self):
         try:
-            subj, preproc = self._validate()
+            self._validate()
         except ValueError as e:
             messagebox.showerror("Error", str(e)); return
-
-        sd      = self._cfg["sourcedata"].get().strip()
-        ses     = self._session_var.get().strip()
-        inp     = self._input_var.get().strip()
-        out     = self._output_var.get().strip()
-        mcode   = self._mcode_var.get().strip()
-        rcode   = self._retro_var.get().strip()
-        func_dir = str(Path(sd) / subj / f"ses-{ses}" / "func")
-
-        Path(inp).mkdir(parents=True, exist_ok=True)
-        Path(out).mkdir(parents=True, exist_ok=True)
-
-        # Part1 MATLAB + Part2 bash + Part3 MATLAB — chained in one bash -c
-        script = (
-            f"set -euo pipefail\n"
-            # Part 1
-            f"echo '[Step 04] Part 1 — Generate 1D ...'\n"
-            f"matlab -nodisplay -nosplash -batch \""
-            f"set(0,'DefaultFigureVisible','off');"
-            f"addpath('{mcode}');"
-            f"preproc_generate_1D_v2('{preproc}','{inp}','{subj}','{sd}',"
-            f"'SMS',{self._sms_var.get()},'FS_OUT',{self._fs_var.get()},"
-            f"'TR_FALLBACK',{self._tr_var.get()},"
-            f"'Cardiac',{'1' if self._cardiac_var.get() == 'both' else '0'},"
-            f"{self._decision_arg()}"
-            f"'SESSION','{ses}');\"\n"
-            # Part 2
-            f"echo '[Step 04] Part 2 — Copy BOLD ...'\n"
-            f"find '{func_dir}' -maxdepth 1 -name '*_bold.nii.gz' -exec cp -n {{}} '{inp}/' \\;\n"
-            f"find '{func_dir}' -maxdepth 1 -name '*_bold.json'   -exec cp -n {{}} '{inp}/' \\;\n"
-            # Part 3
-            f"echo '[Step 04] Part 3 — RETROICOR ...'\n"
-            f"matlab -nodisplay -nosplash -batch \""
-            f"set(0,'DefaultFigureVisible','off');"
-            f"addpath('{mcode}');addpath('{rcode}');"
-            f"retroicor_batch('{inp}','{out}','{rcode}');\"\n"
-            f"echo '[Step 04] Done.'"
-        )
-        self._run_cmd(["bash", "-c", script], inp, "Step 04 — All parts", "step_04")
+        Path(self._input_var.get().strip()).mkdir(parents=True, exist_ok=True)
+        Path(self._output_var.get().strip()).mkdir(parents=True, exist_ok=True)
+        self._run_cmd(self._step04_cmd("all"), self._input_var.get().strip(),
+                      "Step 04 — All parts", "step_04")
 
     # ── Shared run helpers ────────────────────────────────────────────────────
 

@@ -59,8 +59,15 @@ fi
 BIDS_SUBJ="$1"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
-SOURCEDATA="${2:-/autofs/cluster/vagabond/USERS/MARIO/Projects/lyme/sourcedata}"
+# ── Arguments (no hardcoded paths) ──────────────────────────────────────────────
+SOURCEDATA="${2:-}"
+if [ -z "${SOURCEDATA}" ]; then
+    echo "ERROR: sourcedata (arg 2) is required — no hardcoded default."
+    echo "Usage: $0 <bids_subject_id> <sourcedata_dir> [preproc] [input] [output] \\"
+    echo "          [matlab] [matlab_code_dir] [retro_code_dir] [session] [sms] [fs_out] \\"
+    echo "          [tr_fallback] [cardiac] [decision_file] [part: all|p1|p2|p3|cardiacqc]"
+    exit 1
+fi
 PREPROC_DIR="${3:-${SOURCEDATA}/derivatives/physio/${BIDS_SUBJ}/preprocessed}"
 RETRO_INPUT="${4:-${SOURCEDATA}/derivatives/physio/${BIDS_SUBJ}/retroicor/input}"
 RETRO_OUTPUT="${5:-${SOURCEDATA}/derivatives/physio/${BIDS_SUBJ}/retroicor/output}"
@@ -76,9 +83,13 @@ CARDIAC="${13:-1}"
 # Per-run piezo-QC decision manifest (overrides CARDIAC per run). If not given,
 # auto-use the conventional manifest in PREPROC_DIR when it exists.
 DECISION_FILE="${14:-}"
+# Which part(s) to run: all (default) | p1 (1D) | p2 (copy BOLD) | p3 (RETROICOR) |
+# cardiacqc (piezo QC only). Lets the GUI drive individual buttons via this one .sh.
+PART="${15:-all}"
 if [ -z "${DECISION_FILE}" ] && [ -f "${PREPROC_DIR}/${BIDS_SUBJ}_cardiac_decision.csv" ]; then
     DECISION_FILE="${PREPROC_DIR}/${BIDS_SUBJ}_cardiac_decision.csv"
 fi
+run_part() { [ "${PART}" = "all" ] || [ "${PART}" = "$1" ]; }
 
 echo "============================================"
 echo " STEP 04 — RETROICOR (native-space physio correction, before fMRIPrep)"
@@ -99,12 +110,14 @@ if [ ! -d "${PREPROC_DIR}" ]; then
     exit 1
 fi
 
-n_filt=$(find "${PREPROC_DIR}" -maxdepth 1 -name "${BIDS_SUBJ}_task-*_filtered.mat" | wc -l)
-if [ "${n_filt}" -eq 0 ]; then
-    echo "ERROR: No *_filtered.mat files found in ${PREPROC_DIR}"
-    exit 1
+if run_part p1; then
+    n_filt=$(find "${PREPROC_DIR}" -maxdepth 1 -name "${BIDS_SUBJ}_task-*_filtered.mat" | wc -l)
+    if [ "${n_filt}" -eq 0 ]; then
+        echo "ERROR: No *_filtered.mat files found in ${PREPROC_DIR}"
+        exit 1
+    fi
+    echo " Found ${n_filt} filtered mat(s)."
 fi
-echo " Found ${n_filt} filtered mat(s)."
 
 n_rdeco=$(find "${PREPROC_DIR}" -maxdepth 1 -name "${BIDS_SUBJ}_task-*_rdeco.mat" | wc -l)
 if [ "${CARDIAC}" = "1" ]; then
@@ -122,6 +135,16 @@ echo ""
 env_script="${SCRIPT_DIR}/utility/fmriprep_env.sh"
 [ -f "${env_script}" ] && source "${env_script}"
 
+# ── PART cardiacqc: piezo QC only (cardiac_qc.m), then exit ───────────────────
+if [ "${PART}" = "cardiacqc" ]; then
+    qc_dir="$(dirname "${PREPROC_DIR}")/cardiac_qc"
+    echo " Running cardiac_qc -> ${qc_dir}"
+    "${MATLAB_EXE}" -nodisplay -nosplash -batch \
+        "set(0,'DefaultFigureVisible','off'); addpath('${MATLAB_CODE_DIR}'); \
+         cardiac_qc('${PREPROC_DIR}','${BIDS_SUBJ}','${qc_dir}');"
+    exit $?
+fi
+
 # ── Create directories ────────────────────────────────────────────────────────
 mkdir -p "${RETRO_INPUT}"
 mkdir -p "${RETRO_OUTPUT}"
@@ -132,6 +155,7 @@ mkdir -p "${RETRO_OUTPUT}"
 #   - incorporates R-DECO R-peaks if *_rdeco.mat exists
 #   - reads TR from BIDS JSON sidecar
 #   - writes RETRO-resp_*.1D (and RETRO-qrs_*.1D if R-DECO available) to RETRO_INPUT
+if run_part p1; then
 echo "============================================"
 echo " PART 1: Generate 1D files"
 echo "============================================"
@@ -158,10 +182,12 @@ if ! "${MATLAB_EXE}" -nodisplay -nosplash -batch "${matlab_cmd_p1}"; then
     exit 1
 fi
 echo ""
+fi  # end PART 1
 
 # ── PART 2: Assemble input folder ─────────────────────────────────────────────
 # Copy BIDS BOLD files and JSON sidecars from sourcedata into RETRO_INPUT.
 # retroicor_batch.m expects BOLD + JSON + 1D all in the same folder.
+if run_part p2; then
 echo "============================================"
 echo " PART 2: Assemble BOLD + JSON files"
 echo "============================================"
@@ -187,6 +213,7 @@ find "${bids_func_dir}" -maxdepth 1 -name "*_bold.json" \
 echo " Assembled. Contents of input folder:"
 ls "${RETRO_INPUT}" | sed 's/^/   /'
 echo ""
+fi  # end PART 2
 
 # ── PART 3: Run RETROICOR ─────────────────────────────────────────────────────
 # retroicor_batch.m scans the input folder for:
@@ -194,6 +221,7 @@ echo ""
 #   *.json             BIDS sidecar (needs SliceTiming, RepetitionTime)
 #   RETRO-resp_*.1D    respiratory regressor
 #   RETRO-qrs_*.1D     cardiac regressor (optional)
+if run_part p3; then
 echo "============================================"
 echo " PART 3: Run RETROICOR"
 echo "============================================"
@@ -225,3 +253,4 @@ else
     echo "ERROR: retroicor_batch exited with code ${retro_exit}"
     exit ${retro_exit}
 fi
+fi  # end PART 3
