@@ -61,9 +61,15 @@ derivatives/physio/<subj>/retroicor/
 ```
 
 ## 7. Piezo cardiac quality — per-sequence review
-A messy piezo trace yields unreliable R-peaks; using its cardiac RETROICOR
-regressors injects structured noise rather than removing it. The pipeline policy
-is to **skip cardiac and run respiration-only** for those runs.
+**Limitation (Task 09): no ECG is recorded — cardiac is a piezo pulse.** The piezo
+pulse lags the true ECG R-wave by a variable pulse-transit delay and is more
+motion/drift sensitive, so cardiac RETROICOR phase is less precise than with ECG. A
+messy piezo trace yields unreliable R-peaks; using its cardiac RETROICOR regressors
+injects structured noise rather than removing it. The pipeline policy is to **run
+respiration-only** for those runs. All cardiac-QC verdicts/metrics are stored in QC
+(`<subj>_cardiac_qc.csv` + per-run figures; cohort `codes/qc/group_piezo_qc.{csv,md}`)
+as **flags only — no run/subject is stopped or skipped**. Adaptive HR-band handling
+would be added only if pilot heart-rate data require it.
 
 In the GUI's **Step 04 → "Piezo QC Review"** tab:
 1. **Run / Refresh Cardiac QC** — generates a per-run QC image + verdict
