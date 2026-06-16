@@ -66,7 +66,27 @@ derivatives/fmriprep/qc_fd_summary.json  (FD + registration QC)
 - Check `qc_fd_summary.json`: subjects with **mean FD > 0.9 mm** are flagged;
   any subject "missing MNI BOLD" indicates a registration/normalisation failure.
 
-## 8. Troubleshooting
+## 8. Provenance (Task 29)
+Before generating pilot outputs, capture the analysis environment so a scanner/
+platform effect is not confused with a software change:
+
+- GUI: **QC panel → "Capture provenance"** (or run `utility/collect_provenance.py`).
+- Records: pipeline git commit/branch/dirty, fMRIPrep `.simg` version-from-filename
+  (+ optional sha256 with `--hash-simg`), SPM12 + MATLAB versions (via `spm('Ver')`
+  and `version` when MATLAB is launched), RETROICOR (`generate_1D_fun_1.m`,
+  `retroicor_main_modi.m`) and R-DECO source hashes, and the Python environment.
+- Output: `codes/qc/provenance/provenance_<timestamp>.json` (+ `provenance_latest.json`
+  and `requirements_frozen_<timestamp>.txt` — the authoritative Python pin).
+- Direct Python deps are listed in `utility/requirements.txt`.
+
+Capture once per batch **on each acquisition platform** so the two-platform pilot
+(Task 12) can be tied to an identical analysis environment.
+
+> Step 05 Part 1 also writes a corrected-BIDS audit log
+> (`derivatives/fmriprep/qc/corrected_bids_audit.csv`, Task 13) — review flagged
+> subjects there before trusting fMRIPrep outputs.
+
+## 9. Troubleshooting
 | Symptom | Cause / fix |
 |---------|-------------|
 | `✗ FAILED: sub-…` | See `work_dir` crash logs; common causes: bad fieldmaps, OOM (raise `--mem_mb`), missing FS license. |
@@ -74,5 +94,5 @@ derivatives/fmriprep/qc_fd_summary.json  (FD + registration QC)
 | No MNI BOLD in QC | Normalisation failed — inspect HTML report, re-run subject. |
 | Validator reports issues | Fix in BIDS (Step 01) before continuing. |
 
-## 9. Next step
+## 10. Next step
 [SOP 06 — Stim Triggers](SOP_06_stim_triggers.md) (physiological branch).

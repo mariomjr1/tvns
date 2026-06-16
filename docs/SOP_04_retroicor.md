@@ -83,6 +83,10 @@ A run routed to respiration-only logs `[PIEZO-SKIP]` and simply omits its
 ## 8. QC / verification
 - Confirm `n_filtered` and (if used) `n_rdeco` counts match the number of runs.
 - Inspect `*_retro-pctvar.mat` for the % variance the regressors remove.
+- **Provenance (Task 29):** the RETROICOR source (`generate_1D_fun_1.m`,
+  `retroicor_main_modi.m`) and R-DECO (`R_DECO.m`) versions/hashes are recorded by
+  `utility/collect_provenance.py` (QC panel → "Capture provenance"). Run it once per
+  batch so the exact RETROICOR/R-DECO code is tied to the outputs.
 - Optionally re-run the Step 02 pre/post GIF against `*_retro-corrected.nii.gz`
   to visualise physiological-noise removal.
 - **Flag + log + continue:** `preproc_generate_1D_v2.m` skips any sequence that

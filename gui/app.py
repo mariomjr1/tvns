@@ -2295,6 +2295,8 @@ class QCPanel(ttk.Frame):
     _QC_SCRIPT = SCRIPTS_ROOT / "utility" / "qc_snapshots.py"
     # Cross-stage cardinality audit (Task 25) — audit only, never fails
     _AUDIT_SCRIPT = SCRIPTS_ROOT / "utility" / "audit_cardinality.py"
+    # Batch analysis provenance (Task 29) — record only, never fails
+    _PROV_SCRIPT = SCRIPTS_ROOT / "utility" / "collect_provenance.py"
 
     def __init__(self, parent, cfg: dict, console: Console,
                  status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
@@ -2428,6 +2430,11 @@ class QCPanel(ttk.Frame):
         self._audit_btn = ttk.Button(btn_row, text="▶  Cardinality audit",
                                      command=self._run_audit)
         self._audit_btn.pack(side="left", padx=(16, 0))
+
+        # Batch provenance (Task 29)
+        self._prov_btn = ttk.Button(btn_row, text="▶  Capture provenance",
+                                    command=self._run_provenance)
+        self._prov_btn.pack(side="left", padx=(8, 0))
 
         # Open output folder
         ttk.Button(btn_row, text="Open QC folder",
@@ -2582,6 +2589,7 @@ class QCPanel(ttk.Frame):
 
         self._run_btn.config(state="disabled")
         self._audit_btn.config(state="disabled")
+        self._prov_btn.config(state="disabled")
         self._stop_btn.config(state="normal")
         self._progress.start(10)
         self._status.set("QC snapshot generation running…")
@@ -2616,6 +2624,7 @@ class QCPanel(ttk.Frame):
         self._console.separator()
         self._run_btn.config(state="disabled")
         self._audit_btn.config(state="disabled")
+        self._prov_btn.config(state="disabled")
         self._stop_btn.config(state="normal")
         self._progress.start(10)
         self._status.set("Cardinality audit running…")
@@ -2626,6 +2635,7 @@ class QCPanel(ttk.Frame):
         self._progress.stop()
         self._run_btn.config(state="normal")
         self._audit_btn.config(state="normal")
+        self._prov_btn.config(state="normal")
         self._stop_btn.config(state="disabled")
         if rc == 0:
             self._status.set("Cardinality audit complete ✓")
@@ -2635,6 +2645,53 @@ class QCPanel(ttk.Frame):
             self._status.set(f"Cardinality audit failed (exit {rc})")
             self._console.append(f"[audit] Failed (exit {rc}).", "error")
 
+    def _run_provenance(self):
+        """Capture a batch analysis-provenance record (Task 29). Record only."""
+        if not self._PROV_SCRIPT.is_file():
+            messagebox.showerror("Error", f"Provenance script not found:\n{self._PROV_SCRIPT}")
+            return
+        pr = self._project_root()
+        if not pr:
+            messagebox.showerror("Error", "Set the project folder (sidebar) first."); return
+        # Run under the configured analysis interpreter so package versions match.
+        py = self._cfg["python_exe"].get().strip() or sys.executable
+        out = str(Path(pr) / "codes" / "qc" / "provenance")
+        cmd = [py, str(self._PROV_SCRIPT), "--out", out,
+               "--repo", str(SCRIPTS_ROOT), "--python", py]
+        for flag, key in (("--fmriprep-simg", "fmriprep"), ("--spm-dir", "spm_dir"),
+                          ("--matlab", "matlab_exe"), ("--retro-code", "retro_code"),
+                          ("--matlab-code", "matlab_code")):
+            val = self._cfg[key].get().strip() if key in self._cfg else ""
+            if val:
+                cmd += [flag, val]
+
+        self._console.separator()
+        self._console.append("[provenance] Capturing analysis environment "
+                             "(launches MATLAB for SPM/MATLAB version — may take ~1 min)…", "info")
+        self._console.separator()
+        self._run_btn.config(state="disabled")
+        self._audit_btn.config(state="disabled")
+        self._prov_btn.config(state="disabled")
+        self._stop_btn.config(state="normal")
+        self._progress.start(10)
+        self._status.set("Capturing provenance…")
+        self._runner.run(cmd=cmd, cwd=pr, on_line=self._on_line,
+                         on_done=self._provenance_done)
+
+    def _provenance_done(self, rc: int):
+        self._progress.stop()
+        self._run_btn.config(state="normal")
+        self._audit_btn.config(state="normal")
+        self._prov_btn.config(state="normal")
+        self._stop_btn.config(state="disabled")
+        if rc == 0:
+            self._status.set("Provenance captured ✓")
+            self._console.append(
+                "[provenance] Finished. See codes/qc/provenance/provenance_latest.json", "ok")
+        else:
+            self._status.set(f"Provenance failed (exit {rc})")
+            self._console.append(f"[provenance] Failed (exit {rc}).", "error")
+
     def _on_line(self, line: str):
         self._console.append(line)
 
@@ -2642,6 +2699,7 @@ class QCPanel(ttk.Frame):
         self._progress.stop()
         self._run_btn.config(state="normal")
         self._audit_btn.config(state="normal")
+        self._prov_btn.config(state="normal")
         self._stop_btn.config(state="disabled")
         if rc == 0:
             self._status.set("QC snapshots generated ✓")

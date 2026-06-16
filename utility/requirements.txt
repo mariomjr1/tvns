@@ -1,0 +1,18 @@
+# TVNS pipeline — Python dependencies (Task 29)
+#
+# These are the DIRECT third-party packages the pipeline's Python utilities import.
+# Versions are intentionally left unpinned here because the analysis runs in a
+# managed cluster (Neuroimaging) environment. The AUTHORITATIVE pin for any given
+# batch is the `requirements_frozen_<timestamp>.txt` snapshot written next to the
+# provenance JSON by `collect_provenance.py` (full `pip freeze` of the env that
+# actually ran). Pin from that file to reproduce a specific batch exactly.
+#
+# Install (loose):   pip install -r utility/requirements.txt
+# Reproduce a batch: pip install -r <provenance_dir>/requirements_frozen_<ts>.txt
+
+numpy
+scipy
+nibabel
+matplotlib
+Pillow        # qc_snapshots.py montage (imported as PIL)
+# nilearn      # optional — qc_snapshots uses it for smarter display ranges if present
