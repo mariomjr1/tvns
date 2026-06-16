@@ -152,13 +152,30 @@ else
         echo "ERROR: assembler not found: ${assembler}"
         exit 1
     fi
+    # Corrected-BIDS audit log (Task 13, flag + log + continue). Fresh each run.
+    audit_log="${derivatives_dir}/qc/corrected_bids_audit.csv"
+    mkdir -p "$(dirname "${audit_log}")"
+    rm -f "${audit_log}"
     while IFS= read -r subject; do
         [ -z "${subject}" ] && continue
         echo "  ${subject}: assembling corrected BIDS..."
+        # Assembler is non-fatal: it logs issues/skips to the audit CSV and exits 0.
+        # The || guard only catches a genuine crash; we still continue either way.
         "${python_exe}" "${assembler}" "${raw_bids_dir}" "${subject}" "${corrected_bids_dir}" \
-            || echo "  WARNING: assembly failed for ${subject} (run step04 RETROICOR first?)"
+            --audit-log "${audit_log}" \
+            || echo "  WARNING: assembler crashed for ${subject} (logged; continuing)"
     done < "${bids_subj_list}"
     echo " Corrected BIDS ready: ${corrected_bids_dir}"
+    if [ -f "${audit_log}" ]; then
+        echo " Corrected-BIDS audit log: ${audit_log}"
+        flagged=$(awk -F, 'NR>1 && $3+0>0 {print "   - "$1" ("$3" issue(s))"}' "${audit_log}")
+        if [ -n "${flagged}" ]; then
+            echo " Flagged subjects (advisory — review before trusting fMRIPrep):"
+            echo "${flagged}"
+        else
+            echo " No corrected-BIDS issues flagged."
+        fi
+    fi
 fi
 
 # ── PART 1.5: BIDS Validator ──────────────────────────────────────────────────

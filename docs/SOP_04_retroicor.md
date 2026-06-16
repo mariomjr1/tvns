@@ -85,9 +85,11 @@ A run routed to respiration-only logs `[PIEZO-SKIP]` and simply omits its
 - Inspect `*_retro-pctvar.mat` for the % variance the regressors remove.
 - Optionally re-run the Step 02 pre/post GIF against `*_retro-corrected.nii.gz`
   to visualise physiological-noise removal.
-- **Fail-fast:** `preproc_generate_1D_v2.m` now aborts (non-zero exit) if any
-  sequence fails (e.g. flat physio, no MR triggers), so Part 1 stops instead of
-  silently producing a BOLD without its regressors.
+- **Flag + log + continue:** `preproc_generate_1D_v2.m` skips any sequence that
+  fails (e.g. flat physio, no MR triggers), flags it in a closing warning that
+  lists the skipped runs, and proceeds with the rest — it does **not** abort. Review
+  the skipped list before trusting the corrected output. (Part 1 only aborts on a
+  genuine MATLAB crash.)
 
 > The `*_retro-regressors.mat` are the GLM covariates; the corrected NIfTIs are
 > for visualisation. Step 07 models the **fMRIPrep T1w BOLD** with these
@@ -98,7 +100,8 @@ A run routed to respiration-only logs `[PIEZO-SKIP]` and simply omits its
 |---------|-------------|
 | `No *_filtered.mat files found` | Run Step 03 first. |
 | `0 R-DECO file(s)` | R-DECO not run — proceeds respiration-only (no cardiac regressors). Run R-DECO in Step 03 to add them. |
-| `generate_1D_v2 failed` | A sequence failed (flat physio / no MR triggers). Fix the offending run; the step now aborts instead of continuing. |
+| `N of M sequence(s) SKIPPED` (generate_1D) | Those runs failed (flat physio / no MR triggers) and were skipped; the rest continue. Fix and re-run if needed. |
+| `generate_1D_v2 crashed` | Genuine MATLAB error (license/paths/syntax), not a per-sequence skip — check the MATLAB log. |
 | TR fallback warning | JSON missing `RepetitionTime` — verify sidecars or pass correct `tr_fallback`. |
 
 ## 10. Next step

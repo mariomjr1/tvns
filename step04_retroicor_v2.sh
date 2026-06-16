@@ -150,10 +150,11 @@ preproc_generate_1D_v2( \
     'DecisionFile', '${DECISION_FILE}', \
     'SESSION', '${SESSION}');"
 
-# Guard the call directly so the failure is caught under `set -e` and reported
-# (preproc_generate_1D_v2 now throws — non-zero exit — on any failed sequence).
+# preproc_generate_1D_v2 skips individual bad sequences (flag + log + continue) and
+# exits 0; this guard only catches a genuine MATLAB crash (license/syntax/missing
+# code). Per-sequence skips are reported in the MATLAB log above, not here.
 if ! "${MATLAB_EXE}" -nodisplay -nosplash -batch "${matlab_cmd_p1}"; then
-    echo "ERROR: generate_1D_v2 failed (one or more sequences failed, or invalid physio)."
+    echo "ERROR: generate_1D_v2 crashed (MATLAB error — check license/paths above)."
     exit 1
 fi
 echo ""

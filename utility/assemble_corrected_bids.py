@@ -32,6 +32,8 @@ Created by Mario Murakami  (RETROICOR → fMRIPrep reorder)
 """
 
 import argparse
+import csv
+import datetime
 import os
 import shutil
 import sys
@@ -149,9 +151,11 @@ def assemble_subject(sourcedata: Path, subject: str, corrected_root: Path,
 
 
 # ── Integrity verification (Task 13) ──────────────────────────────────────────
-def verify_subject(sourcedata: Path, subject: str, corrected_root: Path, session: str):
+def verify_subject(sourcedata: Path, subject: str, corrected_root: Path, session: str,
+                   retro_output: Path = None):
     """Check the assembled corrected BIDS against the raw BIDS. Returns (issues, checks).
-    issues = list of problem strings (empty = clean); checks = count performed."""
+    issues = list of advisory problem strings (empty = clean); checks = count performed.
+    Advisory only — the caller flags and logs these; it never fails the run."""
     issues, checks = [], 0
     ses = f"ses-{session}"
     src_subj = sourcedata / subject / ses
@@ -213,7 +217,64 @@ def verify_subject(sourcedata: Path, subject: str, corrected_root: Path, session
             checks += 1
             if not cbold.with_name(cbold.name[:-len(".nii.gz")] + ".json").exists():
                 issues.append(f"missing JSON sidecar for {cbold.name}")
+
+    # 4) metadata profile (advisory) — per-run values; never hardcode TotalReadoutTime
+    if dst_func.is_dir():
+        for jf in sorted(dst_func.glob("*_bold.json")):
+            checks += 1
+            try:
+                meta = json.loads(jf.read_text())
+            except Exception:  # noqa: BLE001
+                issues.append(f"unreadable JSON sidecar: {jf.name}")
+                continue
+            tr = meta.get("RepetitionTime")
+            if tr is None:
+                issues.append(f"RepetitionTime missing: {jf.name}")
+            elif abs(float(tr) - 1.190) > 0.01:
+                issues.append(f"RepetitionTime {tr} != 1.190: {jf.name}")
+            st = meta.get("SliceTiming")
+            if st is None:
+                issues.append(f"SliceTiming missing (fMRIPrep STC needs it): {jf.name}")
+            elif len(st) != 92:
+                issues.append(f"SliceTiming has {len(st)} entries (expected 92 / SMS4): {jf.name}")
+            ped = meta.get("PhaseEncodingDirection")
+            if ped is not None and ped != "j-":
+                issues.append(f"PhaseEncodingDirection {ped} != j- (scanner A->P): {jf.name}")
+            if meta.get("TotalReadoutTime") is None:
+                issues.append(f"TotalReadoutTime missing: {jf.name}")
+            if "MultibandAccelerationFactor" not in meta and st is not None and len(st) == 92:
+                issues.append(f"note: MultibandAccelerationFactor absent — accepted "
+                              f"(SliceTiming=92 consistent with SMS4): {jf.name}")
+
+    # 5) staleness / count consistency (advisory)
+    if retro_output is not None and retro_output.is_dir() and dst_func.is_dir():
+        for cbold in sorted(dst_func.glob("*_bold.nii.gz")):
+            checks += 1
+            src_retro = retro_output / (cbold.name[:-len(".nii.gz")] + RETRO_SUFFIX)
+            if not src_retro.exists():
+                issues.append(f"no RETROICOR source for {cbold.name} (stale/leftover from a prior run?)")
+            elif not cbold.is_symlink() and \
+                    cbold.stat().st_mtime < src_retro.stat().st_mtime - 1:
+                issues.append(f"corrected BOLD older than its RETROICOR source (stale copy): {cbold.name}")
+    if src_func.is_dir() and dst_func.is_dir():
+        n_raw = len(list(src_func.glob("*_bold.nii.gz")))
+        n_cor = len(list(dst_func.glob("*_bold.nii.gz")))
+        if n_raw != n_cor:
+            issues.append(f"corrected BOLD count {n_cor} != raw func BOLD count {n_raw}")
+
     return issues, checks
+
+
+def _append_audit_row(log_path: Path, subject: str, n_bold: int, issues: list):
+    """Append one per-subject row to the corrected-BIDS audit CSV (Task 13)."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    new = not log_path.exists()
+    with open(log_path, "a", newline="") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["subject", "n_bold", "n_issues", "issues", "timestamp"])
+        w.writerow([subject, n_bold, len(issues), " ; ".join(issues),
+                    datetime.datetime.now().isoformat(timespec="seconds")])
 
 
 def main():
@@ -227,6 +288,8 @@ def main():
     ap.add_argument("--link-func", action="store_true")
     ap.add_argument("--no-verify", action="store_true",
                     help="skip post-assembly integrity checks (Task 13)")
+    ap.add_argument("--audit-log", default="",
+                    help="append a per-subject audit row to this CSV (Task 13)")
     args = ap.parse_args()
 
     sourcedata = Path(args.sourcedata)
@@ -234,27 +297,49 @@ def main():
     corrected_root = Path(args.corrected_bids)
     retro_output = Path(args.retro_output) if args.retro_output else \
         sourcedata / "derivatives" / "physio" / subject / "retroicor" / "output"
+    audit_log = Path(args.audit_log) if args.audit_log else None
 
-    s = assemble_subject(sourcedata, subject, corrected_root, args.session,
-                         retro_output, args.link_func)
+    # ── Assemble (flag + log + continue: a subject that can't be assembled is
+    #    recorded and skipped, not a hard failure) ──────────────────────────────
+    try:
+        s = assemble_subject(sourcedata, subject, corrected_root, args.session,
+                             retro_output, args.link_func)
+    except SystemExit as e:
+        reason = str(e)
+        if reason.startswith("[ERROR] "):
+            reason = reason[len("[ERROR] "):]
+        reason = reason.strip()
+        print(f"[SKIP] {subject}: {reason}", file=sys.stderr)
+        if audit_log is not None:
+            _append_audit_row(audit_log, subject, 0, [f"assembly skipped: {reason}"])
+        return  # exit 0 — flag + log + continue
+
     print(f"[OK] {s['subject']}: {s['bold']} corrected BOLD, "
           f"{s['anat']} anat + {s['fmap']} fmap linked -> {s['dst']}")
     if s["missing_json"]:
         print(f"[WARN] missing JSON sidecars (fMRIPrep STC needs SliceTiming): "
               f"{s['missing_json']}", file=sys.stderr)
 
-    # ── Integrity verification (Task 13) ──────────────────────────────────────
-    if not args.no_verify:
-        issues, checks = verify_subject(sourcedata, subject, corrected_root, args.session)
+    # ── Integrity verification (Task 13) — advisory; runs if verifying or logging ─
+    issues = []
+    if not args.no_verify or audit_log is not None:
+        issues, checks = verify_subject(sourcedata, subject, corrected_root,
+                                        args.session, retro_output)
         if issues:
-            print(f"[VERIFY] {checks} checks, {len(issues)} issue(s):", file=sys.stderr)
+            print(f"[VERIFY] {checks} checks, {len(issues)} issue(s) "
+                  f"(advisory — review before trusting fMRIPrep):", file=sys.stderr)
             for i in issues:
-                print(f"   ✗ {i}", file=sys.stderr)
+                print(f"   ⚠ {i}", file=sys.stderr)
         else:
-            print(f"[VERIFY] {checks} checks passed ✓ (geometry, fmap IntendedFor, JSON sidecars)")
+            print(f"[VERIFY] {checks} checks passed ✓ (geometry, fmap IntendedFor, "
+                  f"JSON sidecars, metadata profile, staleness)")
         if not _HAVE_NIB:
             print("[VERIFY] note: install nibabel for affine/shape/#volume checks "
                   "(plus run bids-validator on the corrected root).")
+
+    if audit_log is not None:
+        _append_audit_row(audit_log, subject, s["bold"], issues)
+        print(f"[AUDIT] appended row to {audit_log}")
 
     print(f"[DONE] corrected BIDS root: {corrected_root}")
 

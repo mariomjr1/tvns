@@ -80,8 +80,9 @@ function preproc_filter_per_sequence(input_dir, output_dir, bids_subject_id, var
     fprintf(' Filter:     HP=%.3f Hz  BP=[%.2f %.2f] Hz  SR=%d Hz\n', hp_cutoff, bp_low, bp_high, sr);
     fprintf(' Found mats: %d\n\n', numel(mats));
 
-    n_ok   = 0;
-    n_fail = 0;
+    n_ok        = 0;
+    n_fail      = 0;
+    failed_names = {};
 
     for k = 1:numel(mats)
         in_path = fullfile(mats(k).folder, mats(k).name);
@@ -162,6 +163,7 @@ function preproc_filter_per_sequence(input_dir, output_dir, bids_subject_id, var
         catch ME
             fprintf('  FAILED: %s\n', ME.message);
             n_fail = n_fail + 1;
+            failed_names{end+1} = mats(k).name; %#ok<AGROW>
         end
     end
 
@@ -169,14 +171,14 @@ function preproc_filter_per_sequence(input_dir, output_dir, bids_subject_id, var
     fprintf(' Done.  OK: %d  |  Failed: %d\n', n_ok, n_fail);
     fprintf(' Output: %s\n', output_dir);
 
-    % ── Fail-fast (Task 31) ───────────────────────────────────────────────────
-    % Any sequence that failed leaves the subject's physio incomplete. Throw so
-    % MATLAB -batch returns a non-zero exit code and the calling shell aborts,
-    % instead of silently continuing the pipeline on partial/garbage physio.
+    % ── Flag + log + continue (Task 31) ───────────────────────────────────────
+    % A failed sequence is skipped (its bad/garbage physio is not written), but the
+    % step does NOT abort — the runs that succeeded are kept and the pipeline
+    % continues. Failures are flagged here for review.
     if n_fail > 0
-        error('preproc_filter_per_sequence:failures', ...
-              '%d of %d sequence(s) FAILED filtering (see log above). Aborting.', ...
-              n_fail, numel(mats));
+        warning('preproc_filter_per_sequence:failures', ...
+                '%d of %d sequence(s) SKIPPED (see FAILED lines above): %s. Continuing with the %d that succeeded.', ...
+                n_fail, numel(mats), strjoin(failed_names, ', '), n_ok);
     end
 
     fprintf('\nNext steps:\n');

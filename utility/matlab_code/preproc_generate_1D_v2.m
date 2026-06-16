@@ -110,8 +110,9 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     end
     fprintf(' Found:        %d filtered mat(s)\n\n', numel(mats));
 
-    n_ok   = 0;
-    n_fail = 0;
+    n_ok        = 0;
+    n_fail      = 0;
+    failed_names = {};
 
     % cd to output_dir so generate_1D_fun_1 writes .1D files there
     orig_dir = pwd;
@@ -127,6 +128,7 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
         if isempty(tok)
             fprintf('[%d/%d] SKIP (cannot parse task/run): %s\n', k, numel(mats), mats(k).name);
             n_fail = n_fail + 1;
+            failed_names{end+1} = mats(k).name; %#ok<AGROW>
             continue;
         end
         task_name = tok{1}{1};   % e.g. BlockStim
@@ -223,6 +225,7 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
         catch ME
             fprintf('  FAILED: %s\n', ME.message);
             n_fail = n_fail + 1;
+            failed_names{end+1} = mats(k).name; %#ok<AGROW>
         end
     end
 
@@ -233,14 +236,14 @@ function preproc_generate_1D_v2(input_dir, output_dir, bids_subject_id, ...
     fprintf(' 1D files in: %s\n', output_dir);
     fprintf('========================================\n\n');
 
-    % ── Fail-fast (Task 31) ───────────────────────────────────────────────────
-    % A failed run leaves a BOLD without its 1D regressors, so RETROICOR would
-    % silently run uncorrected on it. Throw so MATLAB -batch returns non-zero and
-    % step04 aborts rather than proceeding on incomplete physio.
+    % ── Flag + log + continue (Task 31) ───────────────────────────────────────
+    % A failed run is skipped (no 1D regressors written for it); the step does NOT
+    % abort, so the runs that succeeded proceed to RETROICOR. Failures are flagged
+    % here for review — check this list before trusting the corrected output.
     if n_fail > 0
-        error('preproc_generate_1D_v2:failures', ...
-              '%d of %d sequence(s) FAILED 1D generation (see log above). Aborting.', ...
-              n_fail, numel(mats));
+        warning('preproc_generate_1D_v2:failures', ...
+                '%d of %d sequence(s) SKIPPED (see FAILED lines above): %s. Continuing with the %d that succeeded.', ...
+                n_fail, numel(mats), strjoin(failed_names, ', '), n_ok);
     end
 end
 
