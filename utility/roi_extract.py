@@ -213,15 +213,54 @@ def main():
             header.append(f"sphere{int(r_small)}mm_sig_mean")
     header += [name for name, _ in roi_specs]
 
-    # ── Extract per-subject values ────────────────────────────────────────────
+    def _nan_row(subj):
+        """A row of NaNs for a subject we couldn't read (kept, never dropped)."""
+        r = [subj]
+        if have_coord:
+            r += [float("nan"), float("nan")]
+            if sig_mask is not None:
+                r.append(float("nan"))
+        r += [float("nan") for _ in roi_specs]
+        return tuple(r)
+
+    # ── Extract per-subject values (Task 24: flag + log, NEVER skip) ───────────
+    # A geometry/affine mismatch is resampled onto the reference grid and flagged,
+    # not silently dropped; an unreadable image yields a NaN row + flag. Every wcon
+    # found becomes one CSV row, so expected == analyzed (no silent omission).
     rows = []
+    geom_rows = []          # (subject, shape, affine_match, status)
+    n_resampled = n_error = n_ok = 0
     for w in wcons:
         subj = os.path.splitext(os.path.basename(w))[0]
-        img = nib.load(w)
-        data = np.asanyarray(img.dataobj, dtype=np.float64)
-        if data.shape[:3] != shape:
-            print(f"  WARNING: {subj} shape {data.shape[:3]} != ref {shape}; skipping")
+        try:
+            img = nib.load(w)
+            same_shape  = tuple(img.shape[:3]) == tuple(shape)
+            same_affine = np.allclose(img.affine, affine, atol=1e-3)
+            if same_shape and same_affine:
+                data = np.asanyarray(img.dataobj, dtype=np.float64)
+                gstatus = "OK"; n_ok += 1
+            else:
+                # never skip — resample onto the reference grid (linear), flag it
+                d = np.asanyarray(img.dataobj, dtype=np.float32)
+                if d.ndim == 4:
+                    d = d[..., 0]
+                res = resample_from_to(
+                    nib.Nifti1Image(d, img.affine, img.header), (shape, affine), order=1)
+                data = np.asanyarray(res.dataobj, dtype=np.float64)
+                gstatus = "RESAMPLED"; n_resampled += 1
+                print(f"  [FLAG] {subj}: geometry differs from ref "
+                      f"(shape {tuple(img.shape[:3])} vs {tuple(shape)}, "
+                      f"affine_match={same_affine}) — resampled onto ref grid, NOT skipped")
+            geom_rows.append((subj, str(tuple(int(x) for x in img.shape[:3])),
+                              int(same_affine), gstatus))
+        except Exception as e:  # noqa: BLE001
+            n_error += 1
+            geom_rows.append((subj, "NA", 0, f"ERROR:{e}"))
+            rows.append(_nan_row(subj))   # keep the subject — flagged, not dropped
+            print(f"  [FLAG] {subj}: could not read/resample ({e}) — "
+                  f"NaN row written, NOT skipped")
             continue
+
         row = [subj]
         msg = f"  {subj}:"
         if have_coord:
@@ -248,6 +287,22 @@ def main():
         writer.writerow(header)
         writer.writerows(rows)
     print(f"\nWrote {len(rows)} rows × {len(header)} cols -> {csv_path}")
+
+    # ── Geometry / subject-count audit (Task 24) — flag + log, never omit ──────
+    geom_path = os.path.join(args.output_dir, "_roi_geometry_check.csv")
+    with open(geom_path, "w", newline="") as f:
+        wtr = csv.writer(f)
+        wtr.writerow(["subject", "shape", "affine_match", "status"])
+        wtr.writerows(geom_rows)
+    n_expected, n_analyzed = len(wcons), len(rows)
+    print(f"Geometry/counts: expected {n_expected}, analyzed {n_analyzed} "
+          f"(OK {n_ok}, resampled {n_resampled}, read-error {n_error}) -> {geom_path}")
+    if n_analyzed != n_expected:
+        print(f"*** WARNING: analyzed ({n_analyzed}) != expected ({n_expected}) — "
+              f"investigate {geom_path} ***")
+    if n_resampled or n_error:
+        print(f"*** {n_resampled + n_error} subject(s) FLAGGED (resampled/read-error) "
+              f"— review {geom_path} before trusting ROI stats ***")
 
     # ── Mask a manually-selected con with the largest sphere (needs --coord) ──
     if args.con and not have_coord:

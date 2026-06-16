@@ -56,6 +56,7 @@ bash step10_ROI.sh -6 -40 -20 \
 ```
 <output_dir>/
   roi_values.csv               (voxel value + 5mm-sphere mean, per subject)
+  _roi_geometry_check.csv      (per-subject geometry/affine status — Task 24)
   sphere_5mm_*.nii  sphere_10mm_*.nii   (masks)
   *_masked_10mm.nii            (con masked by 10 mm sphere; if con_file given)
   *_groupmasked.nii            (group contrast masked; if group_con/mask given)
@@ -64,6 +65,11 @@ bash step10_ROI.sh -6 -40 -20 \
 > sphere mean restricted to voxels significant in the Step 09 corrected map.
 
 ## 6. QC / verification
+- **Geometry/counts (Task 24):** a subject whose image geometry/affine differs from
+  the reference is **resampled onto the reference grid and `[FLAG]`-ged, never
+  skipped**; an unreadable image gets a NaN row. Every input image becomes one row
+  (expected == analyzed — no silent omission). Check `_roi_geometry_check.csv` for
+  any status ≠ OK (RESAMPLED / ERROR) before trusting the ROI stats.
 - Open `roi_values.csv` — one row per subject, no NaNs from out-of-brain coords.
 - Overlay a sphere mask on the template to confirm it sits at the intended peak.
 - Confirm `coord_mode` matches how you read the peak (mm vs voxel) — a mismatch
