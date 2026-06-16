@@ -8,6 +8,10 @@ function threshold_group_map(analysis_dir, output_dir, spm_dir, varargin)
 % SPM, and keeps the positive tail (cases > controls is the positive
 % direction of contrast 1).
 %
+% One-tailed 'pos' is the DEFAULT and intended test: the study hypothesis is
+% directional (cases > controls) on preliminary data, so a one-tailed positive
+% threshold is appropriate. Two-tailed is available but thresholds at p/2 per tail.
+%
 % Usage:
 %   threshold_group_map(analysis_dir, output_dir, spm_dir)
 %   threshold_group_map(..., 'P',0.05, 'Extent',0, 'ContrastIndex',1, 'Tail','pos')
@@ -97,6 +101,14 @@ function threshold_group_map(analysis_dir, output_dir, spm_dir, varargin)
     % Default 'none' = uncorrected voxel threshold (fine for a pilot). 'FWE'/'FDR'
     % are opt-in; both fall back to uncorrected (with a warning) if the SPM RFT
     % fields or FDR helper are unavailable.
+    % Tail handling. The DEFAULT is one-tailed 'pos' (cases > controls) — the
+    % intended directional test for this preliminary study (hypothesis: cases >
+    % controls). One-tailed thresholds at p. Two-tailed splits alpha across both
+    % tails, so it must threshold at p/2 per tail (previously it reused the p
+    % threshold, giving an effective alpha of 2p — Task 30 fix).
+    p_unc = p_thr;
+    if strcmp(tail, 'two'); p_unc = p_thr / 2; end
+
     corr_tag = 'unc';
     switch correction
         case 'FWE'
@@ -106,7 +118,7 @@ function threshold_group_map(analysis_dir, output_dir, spm_dir, varargin)
                 corr_tag = 'FWE';
             catch ME
                 warning('FWE correction unavailable (%s) — falling back to uncorrected.', ME.message);
-                t_thr = spm_invTcdf(1 - p_thr, erdf);
+                t_thr = spm_invTcdf(1 - p_unc, erdf);
             end
         case 'FDR'
             try
@@ -115,10 +127,10 @@ function threshold_group_map(analysis_dir, output_dir, spm_dir, varargin)
                 corr_tag = 'FDR';
             catch ME
                 warning('FDR correction unavailable (%s) — falling back to uncorrected.', ME.message);
-                t_thr = spm_invTcdf(1 - p_thr, erdf);
+                t_thr = spm_invTcdf(1 - p_unc, erdf);
             end
         otherwise
-            t_thr = spm_invTcdf(1 - p_thr, erdf);
+            t_thr = spm_invTcdf(1 - p_unc, erdf);
     end
     fprintf('\n========================================\n');
     fprintf(' threshold_group_map (Step 09)\n');
@@ -133,7 +145,7 @@ function threshold_group_map(analysis_dir, output_dir, spm_dir, varargin)
     switch tail
         case 'pos', mask = T >  t_thr;
         case 'neg', mask = T < -t_thr;
-        otherwise,  mask = abs(T) > t_thr;   % two-tailed (use t at p/2 for exact)
+        otherwise,  mask = abs(T) > t_thr;   % two-tailed (t_thr is at p/2 — see p_unc)
     end
     mask(isnan(T)) = false;
 
