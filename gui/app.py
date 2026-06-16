@@ -2293,6 +2293,8 @@ class QCPanel(ttk.Frame):
 
     # Path to the QC engine script (sibling of heuristic.py in utility/)
     _QC_SCRIPT = SCRIPTS_ROOT / "utility" / "qc_snapshots.py"
+    # Cross-stage cardinality audit (Task 25) — audit only, never fails
+    _AUDIT_SCRIPT = SCRIPTS_ROOT / "utility" / "audit_cardinality.py"
 
     def __init__(self, parent, cfg: dict, console: Console,
                  status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
@@ -2421,6 +2423,11 @@ class QCPanel(ttk.Frame):
         self._stop_btn.pack(side="left", padx=4)
         self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=200)
         self._progress.pack(side="left", padx=12)
+
+        # Cross-stage cardinality audit (Task 25)
+        self._audit_btn = ttk.Button(btn_row, text="▶  Cardinality audit",
+                                     command=self._run_audit)
+        self._audit_btn.pack(side="left", padx=(16, 0))
 
         # Open output folder
         ttk.Button(btn_row, text="Open QC folder",
@@ -2574,6 +2581,7 @@ class QCPanel(ttk.Frame):
         self._console.separator()
 
         self._run_btn.config(state="disabled")
+        self._audit_btn.config(state="disabled")
         self._stop_btn.config(state="normal")
         self._progress.start(10)
         self._status.set("QC snapshot generation running…")
@@ -2585,12 +2593,55 @@ class QCPanel(ttk.Frame):
             on_done=self._done,
         )
 
+    def _run_audit(self):
+        """Run the cross-stage cardinality audit (Task 25). Audit only — never fails."""
+        if not self._AUDIT_SCRIPT.is_file():
+            messagebox.showerror("Error", f"Audit script not found:\n{self._AUDIT_SCRIPT}")
+            return
+        sourcedata = self._cfg["sourcedata"].get().strip()
+        if not sourcedata or not os.path.isdir(sourcedata):
+            messagebox.showerror("Error", "Set the sourcedata path in Setup."); return
+        subjects = self._subjects_to_run()
+        if not subjects:
+            messagebox.showerror("Error",
+                "No subjects found. Check SubjectListBIDS.txt or scan sourcedata."); return
+        pr = self._project_root()
+        cmd = [sys.executable, str(self._AUDIT_SCRIPT), sourcedata] + subjects
+        if pr:
+            cmd += ["--out", str(Path(pr) / "codes" / "qc")]
+
+        self._console.separator()
+        self._console.append(
+            f"[audit] Cardinality audit for {len(subjects)} subject(s)…", "info")
+        self._console.separator()
+        self._run_btn.config(state="disabled")
+        self._audit_btn.config(state="disabled")
+        self._stop_btn.config(state="normal")
+        self._progress.start(10)
+        self._status.set("Cardinality audit running…")
+        self._runner.run(cmd=cmd, cwd=pr or sourcedata,
+                         on_line=self._on_line, on_done=self._audit_done)
+
+    def _audit_done(self, rc: int):
+        self._progress.stop()
+        self._run_btn.config(state="normal")
+        self._audit_btn.config(state="normal")
+        self._stop_btn.config(state="disabled")
+        if rc == 0:
+            self._status.set("Cardinality audit complete ✓")
+            self._console.append(
+                "[audit] Finished. See codes/qc/group_cardinality_audit.md", "ok")
+        else:
+            self._status.set(f"Cardinality audit failed (exit {rc})")
+            self._console.append(f"[audit] Failed (exit {rc}).", "error")
+
     def _on_line(self, line: str):
         self._console.append(line)
 
     def _done(self, rc: int):
         self._progress.stop()
         self._run_btn.config(state="normal")
+        self._audit_btn.config(state="normal")
         self._stop_btn.config(state="disabled")
         if rc == 0:
             self._status.set("QC snapshots generated ✓")
