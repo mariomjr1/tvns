@@ -2,6 +2,18 @@ import datetime
 import os
 
 
+# Auto-populate each PEPOLAR fieldmap's IntendedFor with the BOLD runs it should
+# correct (heudiconv >= 0.10). Matching on ImagingVolume links every BOLD that
+# shares the fieldmap's geometry; fMRIPrep then applies TOPUP-based SDC.
+# Verify IntendedFor in the output fmap JSONs (and that fMRIPrep reports SDC as
+# applied) — Task 16. Add 'Shims' to matching_parameters for stricter matching
+# if ShimSetting is present in the sidecars.
+POPULATE_INTENDED_FOR_OPTS = {
+    'matching_parameters': 'ImagingVolume',
+    'criterion': 'Closest',
+}
+
+
 def create_key(template, outtype=('nii.gz',), annotation_classes=None):
     if template is None or not template:
         raise ValueError('Template must be a valid format string')
@@ -24,20 +36,20 @@ def infotodict(seqinfo):
     # For each sequence, define a key variables (e.g., t1w, dwi etc) and template using the create_key function:
     # key = create_key(output_directory_path_and_name).
     # TIPS
-    # If there are sessions, then session must be subfolder name. 
+    # If there are sessions, then session must be subfolder name.
     # Do not prepend the ses key to the session! It will be prepended automatically for the subfolder and the filename.
     # The final value in the filename should be the modality.  It does not have a key, just a value.
-    # Otherwise, there is a key for every value. 
+    # Otherwise, there is a key for every value.
     # Filenames always start with subject, optionally followed by session, and end with modality.
-    
+
     # The "data" key creates sequential numbers which can be for naming sequences.
     # This is especially valuable if you run the same sequence multiple times at the scanner.
     data = create_key('run-{item:02d}')
-    
+
     t1w = create_key('sub-{subject}/{session}/anat/sub-{subject}_{session}_T1w')
 
     t2w = create_key('sub-{subject}/{session}/anat/sub-{subject}_{session}_T2w')
-    
+
 
     # Even if this is resting state, you still need a task key
 
@@ -47,12 +59,21 @@ def infotodict(seqinfo):
 
     func_task_continuous_stim = create_key('sub-{subject}/{session}/func/sub-{subject}_{session}_task-ContinuousStim_run-{item:02d}_bold')
 
+    # PEPOLAR fieldmaps: opposite phase-encode EPI pairs (TOPUP_AP / TOPUP_PA) for
+    # susceptibility distortion correction (TOPUP / fMRIPrep SDCFlows). The dir-
+    # label encodes the phase-encode direction; the actual PhaseEncodingDirection
+    # and TotalReadoutTime are written from the DICOMs at conversion.
+    fmap_ap = create_key('sub-{subject}/{session}/fmap/sub-{subject}_{session}_dir-AP_epi')
+
+    fmap_pa = create_key('sub-{subject}/{session}/fmap/sub-{subject}_{session}_dir-PA_epi')
+
 
     # Section 1b: This data dictionary (below) should be revised by the user.
-    ########################################################################### 
+    ###########################################################################
     # info is a Python dictionary containing the following keys from the infotodict defined above.
     # This list should contain all and only the sequences you want to export from the dicom directory.
-    info = {t1w: [], t2w: [], func_rest: [], func_task_block_stim: [], func_task_continuous_stim: []}
+    info = {t1w: [], t2w: [], func_rest: [], func_task_block_stim: [],
+            func_task_continuous_stim: [], fmap_ap: [], fmap_pa: []}
 
     # The following line does no harm, but it is not part of the dictionary.
     last_run = len(seqinfo)
@@ -70,20 +91,29 @@ def infotodict(seqinfo):
         if (s.dim3 == 176) and ('MEMP' in s.series_description):
             info[t1w].append(s.series_id)
 
-	#t2w
+        #t2w
         if (s.dim3 == 114) and ('t2' in s.series_description):
             info[t2w].append(s.series_id)
-        
-        
+
+
         # fMRI
         if (s.dim3 == 92) and ('REST_ep2d_bold' in s.series_description):
             info[func_rest].append(s.series_id)
 
         if (s.dim3 == 92) and ('BlockStim' in s.series_description):
-            info[func_task_block_stim].append(s.series_id) 
+            info[func_task_block_stim].append(s.series_id)
 
         if (s.dim3 == 92) and ('ContinuousStim' in s.series_description):
             info[func_task_continuous_stim].append(s.series_id)
+
+        # PEPOLAR fieldmaps — opposite-PE EPI pair for SDC. Same geometry as the
+        # BOLD (dim3==92); matched by series_description (TOPUP_AP / TOPUP_PA).
+        # Works for both acquisition platforms (Terra/E12 dim4=2, Terra.X dim4=1).
+        if (s.dim3 == 92) and ('TOPUP_AP' in s.series_description):
+            info[fmap_ap].append(s.series_id)
+
+        if (s.dim3 == 92) and ('TOPUP_PA' in s.series_description):
+            info[fmap_pa].append(s.series_id)
 
 
     for s in seqinfo:
@@ -113,7 +143,7 @@ def infotodict(seqinfo):
         """
     # Section 3: Optional Report
     ###################################
-    # Populate the msg list IF the wrong number of files is created (!= means not equal) 
+    # Populate the msg list IF the wrong number of files is created (!= means not equal)
     # and exit the program with an error (No BIDS files are generated)
     msg = []
 
@@ -122,6 +152,8 @@ def infotodict(seqinfo):
     if len(info[func_rest]) != 1: msg.append('WARNING: Missing correct number of func_rest runs')
     if len(info[func_task_block_stim]) != 1: msg.append('WARNING: Missing correct number of func_task_block_stim runs')
     if len(info[func_task_continuous_stim]) != 1: msg.append('WARNING: Missing correct number of func_task_continuous_stim runs')
+    if len(info[fmap_ap]) != 1: msg.append('WARNING: Missing correct number of fmap dir-AP (TOPUP_AP) runs')
+    if len(info[fmap_pa]) != 1: msg.append('WARNING: Missing correct number of fmap dir-PA (TOPUP_PA) runs')
 
 
     # Print warnings prominently (GUI console tags lines containing "WARNING" in yellow)
