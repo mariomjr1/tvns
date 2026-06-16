@@ -13,6 +13,9 @@ heuristic_warnings.log
 # Archives / scratch
 *.zip
 
+# Protocol samples / dicominfo exports — may contain subject identifiers; keep local
+docs/protocols/
+
 # Agent tasks and Claude config
 agents/
 .claude/
