@@ -1,6 +1,6 @@
 # Start Here — The Whole Pipeline, Start to Finish (read me first)
 
-**Who this is for:** a brand-new intern who has never used this pipeline and may have
+**Who this is for:** a student of neuroimaging new to this pipeline who may have
 little or no fMRI background. It explains, in plain language, **what the GUI does — panel
 by panel, button by button — from the raw scanner files all the way to the final numbers.**
 The numbered SOPs (00–10) are the detailed per-step reference; **this document is the

@@ -5,7 +5,7 @@ operator's checklist: **purpose, prerequisites, inputs, the exact command,
 parameters, outputs, QC checks, troubleshooting, and the next step.**
 
 > **New here? Start with [`_start_here.md` — The Whole Pipeline, Start to Finish](_start_here.md)**
-> — a plain-language, intern-friendly walkthrough of the entire GUI from raw DICOMs to
+> — a plain-language walkthrough (for a student of neuroimaging) of the entire GUI from raw DICOMs to
 > final ROIs. Read it first, then use the numbered SOPs below as the detailed reference.
 
 ## Protocol reference files
