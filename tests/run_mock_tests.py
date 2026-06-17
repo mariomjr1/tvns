@@ -137,6 +137,22 @@ def shell_tests():
     rec("shell", "step05b requires freesurfer_home + subjects_dir",
         "PASS" if r.returncode == 1 else "FAIL")
 
+    # step05c brainstem co-reg refinement (stub FS/ANTs tools)
+    for t in ("mri_binarize", "antsApplyTransforms", "antsRegistration"):
+        (binp / t).write_text('#!/bin/bash\nexit 0\n'); (binp / t).chmod(0o755)
+    (sdir / "sub-T" / "mri" / "brainstemSsLabels.v13.mgz").write_text("x")
+    fp = T / "fp"; (fp / "sub-T" / "anat").mkdir(parents=True)
+    (fp / "sub-T/anat/sub-T_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5").write_text("x")
+    (fp / "sub-T/anat/sub-T_space-MNI152NLin2009cAsym_desc-preproc_T1w.nii.gz").write_text("x")
+    mni = T / "mni.nii.gz"; mni.write_text("x")
+    s5c = str(REPO / "step05c_brainstem_coreg_v2.sh")
+    r = run([s5c, str(sl2), str(fsh), str(sdir), str(fp), str(mni), str(T / "coreg_out")])
+    rec("shell", "step05c masked-SyN refine (stub ANTs/FS)",
+        "PASS" if r.returncode == 0 and "brainstemRefine" in r.stdout else "FAIL")
+
+    r = run([s5c, str(sl2)])
+    rec("shell", "step05c requires its inputs", "PASS" if r.returncode == 1 else "FAIL")
+
 
 # ── 3. Python logic (synthetic fixtures) ──────────────────────────────────────
 def logic_tests():

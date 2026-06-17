@@ -1390,6 +1390,7 @@ class _FmriprepTab(ttk.Frame):
         self._last_subjects: list = []
         self._tmp_subj_file: "str | None" = None
         self._vars       = {k: tk.StringVar(value=v) for k, v in self._DEFAULTS_FP.items()}
+        self._mni_tmpl_var = tk.StringVar(value="")   # MNI template for step05c refine
 
         ttk.Label(self, text="fMRIPrep",
                   font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 4))
@@ -1492,6 +1493,14 @@ class _FmriprepTab(ttk.Frame):
         self._pit_btn = ttk.Button(seg_row, text="▶ Pituitary/pineal (PGlandsSeg)",
                                    command=lambda: self._run_seg("pituitary"))
         self._pit_btn.pack(side="left")
+        PathRow(seg_frame, "MNI template (05c):", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._mni_tmpl_var, label_width=18).pack(fill="x", pady=(6, 2))
+        coreg_row = ttk.Frame(seg_frame); coreg_row.pack(fill="x")
+        self._coreg_btn = ttk.Button(
+            coreg_row, text="▶ Brainstem co-reg refine (step05c, masked SyN)",
+            command=self._run_coreg)
+        self._coreg_btn.pack(side="left")
 
     def _subjects(self):
         if self._sel_mode.get() == "specific":
@@ -1619,7 +1628,7 @@ class _FmriprepTab(ttk.Frame):
         self._console.separator()
         self._console.append(f"[step05b] {label} — {len(subjects)} subject(s)…", "info")
         self._console.separator()
-        for b in (self._run_btn, self._bs_btn, self._pit_btn):
+        for b in (self._run_btn, self._bs_btn, self._pit_btn, self._coreg_btn):
             b.config(state="disabled")
         self._stop_btn.config(state="normal")
         self._progress.start(10)
@@ -1630,7 +1639,7 @@ class _FmriprepTab(ttk.Frame):
 
     def _seg_done(self, rc, label):
         self._progress.stop()
-        for b in (self._run_btn, self._bs_btn, self._pit_btn):
+        for b in (self._run_btn, self._bs_btn, self._pit_btn, self._coreg_btn):
             b.config(state="normal")
         self._stop_btn.config(state="disabled")
         if getattr(self, "_tmp_subj_file", None):
@@ -1645,6 +1654,43 @@ class _FmriprepTab(ttk.Frame):
         else:
             self._status.set(f"{label} failed (exit {rc})")
             self._console.append(f"[step05b] {label} failed (exit {rc}).", "error")
+
+    def _run_coreg(self):
+        """step05c: brainstem cost-function-masked SyN refinement (flag+log+continue)."""
+        script = SCRIPTS_ROOT / "step05c_brainstem_coreg_v2.sh"
+        if not script.is_file():
+            messagebox.showerror("Error", f"Script not found:\n{script}"); return
+        subjects = self._subjects()
+        if not subjects:
+            messagebox.showerror("Error", "No subjects. Generate the BIDS list first."); return
+        fs_home = (self._fs_home_var.get().strip() if self._fs_home_var else "")
+        fs_dir  = self._vars["fs_dir"].get().strip()
+        fp_der  = self._vars["fp_der"].get().strip()
+        mni     = self._mni_tmpl_var.get().strip()
+        if not (fs_home and fs_dir and fp_der):
+            messagebox.showerror("Error", "Set FreeSurfer home, FreeSurfer dir, and derivatives dir."); return
+        if not mni:
+            messagebox.showerror("Error", "Set the MNI template (05c) path."); return
+        out_dir = str(Path(fp_der).parent / "brainstem_coreg")
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix="_step05c_subj.txt", prefix="coreg_", delete=False)
+        tmp.write("\n".join(subjects) + "\n"); tmp.close()
+        self._tmp_subj_file = tmp.name
+        cmd = ["bash", str(script), tmp.name, fs_home, fs_dir, fp_der, mni, out_dir]
+
+        label = "Brainstem co-reg refine"
+        self._console.separator()
+        self._console.append(f"[step05c] {label} — {len(subjects)} subject(s)…", "info")
+        self._console.separator()
+        for b in (self._run_btn, self._bs_btn, self._pit_btn, self._coreg_btn):
+            b.config(state="disabled")
+        self._stop_btn.config(state="normal")
+        self._progress.start(10)
+        self._status.set(f"{label} running…")
+        self._runner.run(cmd=cmd, cwd=out_dir if os.path.isdir(out_dir) else "/tmp",
+                         on_line=self._console.append,
+                         on_done=lambda rc, lbl=label: self._seg_done(rc, lbl))
 
     def _stop(self):
         """Stop the currently running process."""
