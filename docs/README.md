@@ -4,6 +4,10 @@ This folder contains one SOP per pipeline step. Each SOP is a self-contained
 operator's checklist: **purpose, prerequisites, inputs, the exact command,
 parameters, outputs, QC checks, troubleshooting, and the next step.**
 
+> **New here? Start with [SOP X — The Whole Pipeline, Start to Finish](SOP_X_everything.md)**
+> — a plain-language, intern-friendly walkthrough of the entire GUI from raw DICOMs to
+> final ROIs. Read it first, then use the numbered SOPs below as the detailed reference.
+
 ## Protocol reference files
 
 The acquisition evidence used for protocol/task decisions is stored under
@@ -36,11 +40,14 @@ regressors only.
 | [03 — Preprocess + R-DECO](SOP_03_preprocess_rdeco.md) | `step03_preprocess_for_retroicor_v2.sh` | per subject | MATLAB |
 | [04 — RETROICOR](SOP_04_retroicor.md) | `step04_retroicor_v2.sh` | per subject | MATLAB |
 | [05 — fMRIPrep](SOP_05_fmriprep.md) | `step05_fmriprep_v2.sh` | per study | cluster (Singularity) |
+| [05b — Brainstem/pituitary seg](SOP_05_fmriprep.md#8b-optional-brainstem--pituitary-extras-step05b--step05c) | `step05b_freesurfer_segment_v2.sh` | per subject | FreeSurfer ≥ 8.1 (cluster) |
+| [05c — Brainstem co-reg refine](SOP_05_fmriprep.md#8b-optional-brainstem--pituitary-extras-step05b--step05c) | `step05c_brainstem_coreg_v2.sh` | per subject | ANTs (cluster) |
 | [06 — Stim Triggers](SOP_06_stim_triggers.md) | `step06_stim_v2.sh` | per subject | cluster |
 | [07 — First-level + MNI](SOP_07_firstlevel_mni.md) | `step07_firstlevel_mni_v2.sh`, `step07b_warp_folder_v2.sh` | per study | MATLAB / SPM12 |
 | [08 — Second-level (groups)](SOP_08_secondlevel.md) | `step08a_populate_v2.sh`, `step08b_groups_v2.sh`, `step08_secondlevel_v2.sh` | per study | MATLAB / SPM12 |
 | [09 — Threshold p<0.05](SOP_09_threshold.md) | `step09_p_value.sh` | per contrast | MATLAB / SPM12 |
 | [10 — ROI extraction](SOP_10_roi.md) | `step10_ROI.sh` | per peak | Python |
+| [10b — Native-space nuclei ROIs](SOP_10_roi.md#6b-brainstem-nuclei-rois-atlas--native-space-step10b) | `step10b_atlas_native_roi_v2.sh` | per subject | ANTs + Python |
 
 ## Conventions used in every SOP
 

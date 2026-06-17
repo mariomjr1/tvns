@@ -75,12 +75,28 @@ bash step10_ROI.sh -6 -40 -20 \
 - Confirm `coord_mode` matches how you read the peak (mm vs voxel) — a mismatch
   silently places the ROI in the wrong location.
 
+## 6b. Brainstem-nuclei ROIs (atlas + native-space step10b)
+For named brainstem nuclei (NTS/LC/raphe), use a labeled atlas instead of spheres:
+- **Direct (MNI) — works now:** set **`brainstem_atlas`** in Setup (a labeled NIfTI,
+  e.g. Brainstem Navigator, in MNI). The step10 ROI panel's "Labeled atlas" field is
+  bound to it; add the label values/names → one mean column per nucleus. With the
+  default MNI first level (Task 22) the atlas aligns to the `wcon` images by grid
+  resampling.
+- **Native space (uses step05c) — `step10b_atlas_native_roi_v2.sh`:** warps the atlas
+  into each subject's native T1w space via the composed transform (fMRIPrep MNI→T1w ∘
+  step05c refine), then extracts per-nucleus means from the native (T1w-space)
+  contrast → `group_brainstem_nuclei_native.csv`. **Requires step07 run with
+  Space=T1w.** GUI: RoiPanel "Native-space nuclei ROIs (step10b)" sub-frame/button.
+  **SCAFFOLD:** verify the atlas-in-native overlay on the cluster before trusting the
+  numbers (the transform direction/order must be confirmed there).
+
 ## 7. Troubleshooting
 | Symptom | Cause / fix |
 |---------|-------------|
 | `wcon directory not found` | Point `wcon_dir` at a Step 08a task folder. |
 | All-NaN / zero values | Coordinate outside the image or wrong `coord_mode`. |
 | `roi_extract.py not found` | Check `utility/roi_extract.py` exists. |
+| `atlas-in-native` looks misregistered | step10b transform chain — confirm fMRIPrep xfm direction + step05c warp order on cluster. |
 
 ## 8. End of pipeline
 ROI CSVs feed statistical analysis / figures. See the

@@ -96,6 +96,21 @@ Capture once per batch **on each acquisition platform** so the two-platform pilo
 > (`derivatives/fmriprep/qc/corrected_bids_audit.csv`, Task 13) — review flagged
 > subjects there before trusting fMRIPrep outputs.
 
+## 8b. Optional brainstem & pituitary extras (step05b / step05c)
+After fMRIPrep's recon-all, the fMRIPrep panel exposes optional segmentation/refinement
+buttons (require **FreeSurfer ≥ 8.1** in Setup; ANTs for 05c). Flag + log + continue.
+
+- **step05b** (`step05b_freesurfer_segment_v2.sh`): **Brainstem segmentation**
+  (`segment_subregions brainstem` → subject-space brainstem label/mask, the input to
+  05c) and **Pituitary/pineal** (`mri_pglands_seg`, FS ≥ 8.1 → `T1.pglands.mgz` +
+  volumes; flag-skips if FS < 8.1). These are segmentation/volumetry — they do NOT
+  change co-registration by themselves.
+- **step05c** (`step05c_brainstem_coreg_v2.sh`): **Brainstem co-reg refine** — a
+  cost-function-masked ANTs SyN driven by the 05b mask that refines brainstem
+  alignment (this *is* the co-registration improvement). Consumed by step10b.
+  **SCAFFOLD:** confirm ANTs params + fMRIPrep transform filenames on the cluster and
+  verify an atlas-in-native overlay before trusting brainstem ROIs.
+
 ## 9. Troubleshooting
 | Symptom | Cause / fix |
 |---------|-------------|
