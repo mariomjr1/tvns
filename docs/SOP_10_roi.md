@@ -97,8 +97,10 @@ For named brainstem nuclei (NTS/LC/raphe), use a labeled atlas instead of sphere
 - **Native space (uses step05c) — `step10b_atlas_native_roi_v2.sh`:** warps the atlas
   into each subject's native T1w space via the composed transform (fMRIPrep MNI→T1w ∘
   step05c refine), then extracts per-nucleus means from the native (T1w-space)
-  contrast → `group_brainstem_nuclei_native.csv`. **Requires step07 run with
-  Space=T1w.** GUI: RoiPanel "Native-space nuclei ROIs (step10b)" sub-frame/button.
+  contrast → `group_brainstem_nuclei_native.csv`. **Requires step07 run with Space=`T1w`
+  or `both`.** GUI: RoiPanel "Native-space nuclei ROIs (step10b)" sub-frame/button — its
+  **native con root defaults to `derivatives/spm/first_level_t1w`** (the native route) and
+  output to `derivatives/spm/roi/brainstem_native`.
   **SCAFFOLD:** verify the atlas-in-native overlay on the cluster before trusting the
   numbers (the transform direction/order must be confirmed there).
 

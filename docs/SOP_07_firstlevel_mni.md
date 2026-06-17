@@ -17,12 +17,16 @@ available as an optional sensitivity/comparison route. Masks and BOLDs are
 **located in place** in `derivatives/fmriprep/` — there is no copy step.
 
 ## GUI (in the app)
-Open the **Step 07 — First-level** panel. Set **Space**: **MNI (default)** models the
-fMRIPrep MNI BOLD directly; **T1w** (native — required for the step10b native ROIs) or
-**both**. Leave **do_mni** for the legacy SPM warp with the T1w route only. Adjust
-smoothing/TR if changing defaults, pick subjects → **Run** (`step07_firstlevel_mni_v2.sh`).
-The separate **07b** panel warps a single existing con folder to MNI. Output:
-`con_0001.nii` / `wcon_0001.nii` ("Stim > baseline") per subject × task.
+Open the **Step 07 — First-level** panel. **Space defaults to `both`**, which runs **both
+routes into separate, auto-created folders**: the **MNI route** → `MNI output dir`
+(`derivatives/spm/first_level_mni`, feeds step08) and the **native route** → `T1w output
+dir` (`derivatives/spm/first_level_t1w`, feeds step10b). Pick `MNI` or `T1w` to run just
+one. Adjust smoothing/TR if changing defaults, pick subjects → **Run** (the GUI calls
+`step07_firstlevel_mni_v2.sh` once per route). The separate **07b** panel warps a single
+existing con folder to MNI. Output (same names, separate folders): `con_0001.nii` /
+`wcon_0001.nii` ("Stim > baseline") per subject × task. **Note:** running `MNI` and `T1w`
+into the *same* `output_dir` from the CLI would collide (identical names) — the GUI avoids
+this by using the two route folders; from the CLI, give each space its own `output_dir`.
 
 ## 2. Prerequisites
 - Step 02 (fMRIPrep T1w BOLD + brain mask) and Step 06 (`first_level/` inputs).

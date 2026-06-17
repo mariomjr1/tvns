@@ -159,8 +159,31 @@ Run the app (e.g. `python gui/app.py`). The window has:
 
 ## D. Setup tab — fill the paths once
 
-Open **Setup** first. These are set **once** and reused by every step. If a path is wrong,
-the step that needs it tells you (it won't guess or invent a path).
+### First: point at a project (left "Project" sidebar)
+The **Project** bar on the left chooses *which study you're working on* — and can build a
+fresh one for you:
+- **Folder + `…`** — pick an **existing** project folder. The GUI auto-fills `rawdata/`,
+  `sourcedata/`, and the subject lists under it.
+- **New: `<name>` + `+ Create`** — **scaffolds a brand-new project**: it creates the whole
+  folder tree (rawdata, sourcedata, every `derivatives/` subfolder **including the two
+  separated first-level routes `spm/first_level_mni` and `spm/first_level_t1w`**,
+  `second_level/{tasks,groups,thresholded}`, `roi`, `brainstem_coreg`, `codes/{qc,logs}`)
+  and switches to it. Use **Create** for a new study; use **Folder** to *continue an
+  existing one*.
+- **✓ Check** — *inventories* the project (it does **not** change anything): counts the
+  subjects in rawdata/sourcedata, lists every `derivatives/` subfolder + the subject lists,
+  reports what changed since last time, and saves a snapshot to `project_inventory.json`
+  (plus a dated log in `codes/logs/`). It runs automatically on launch and whenever the
+  project folder changes — it's your "what's in this project right now?" view.
+
+### Save / Load config (top header buttons)
+- **💾 Save config** writes **all** the Setup paths to a JSON file.
+- **📂 Load config** reads them back in. So you configure a project once, save it, and
+  reload it next session (or hand it to a colleague) — nothing is hardcoded in the code.
+
+### Then: fill the path fields (once)
+Set these **once**; every step reuses them. If a path is wrong, the step that needs it
+tells you (it won't guess or invent a path). **What to put in each field:**
 
 | Setup field | What it is | Typical value / note |
 |---|---|---|
@@ -179,8 +202,8 @@ the step that needs it tells you (it won't guess or invent a path).
 | **FreeSurfer 8.1+ home** | FreeSurfer ≥ 8.1 install | needed for pituitary seg (05b) + brainstem steps; the seg/coreg scripts source `<home>/SetUpFreeSurfer.sh` |
 | **Brainstem atlas (NIfTI)** | Labeled brainstem-nuclei map (MNI) | e.g. Brainstem Navigator; used by step 10 / 10b |
 
-> Tip: you can save/load a "batch file" of these paths so a new project is one load away —
-> there's no need to hardcode anything.
+> The two **first-level route folders** (`first_level_mni`, `first_level_t1w`) are created
+> by **+ Create** and filled by step 07 — you don't set them in Setup (see Section F).
 
 ---
 
@@ -307,12 +330,14 @@ the matching numbered SOP (linked).
 ### Step 07 — First-level GLM (+ 07b) · [SOP 07](SOP_07_firstlevel_mni.md)
 - **What:** per subject, estimates the response to stimulation → a **"Stim > baseline"**
   contrast. The GLM adds **motion regressors only** (physio was removed upstream).
-- **Space (the key choice):** **MNI (default)** models the fMRIPrep MNI BOLD directly;
-  **T1w** (native) or **both** — pick **T1w/both** if you want the native-space brainstem
-  ROIs in 10b. (See [Section F](#f-the-two-analysis-routes).)
-- **GUI:** *Step 07* panel → set **Space**, smoothing/TR if changing defaults → **Run**.
-  The *07b* panel warps a single existing con folder to MNI.
-- **Out:** `con_0001.nii` / `wcon_0001.nii` per subject × task.
+- **Space (the key choice):** **`both` (default)** runs *both* routes into **separate
+  folders** (`first_level_mni` + `first_level_t1w`); pick `MNI` or `T1w` to run just one.
+  (See [Section F](#f-the-two-analysis-routes).)
+- **GUI:** *Step 07* panel → set **Space** (defaults to `both`), smoothing/TR if changing
+  defaults → **Run**. With `both` it runs the MNI route then the T1w route, each into its
+  own auto-created folder. The *07b* panel warps a single existing con folder to MNI.
+- **Out:** `first_level_mni/<subj>/<task>/{con,wcon}_0001.nii` (MNI) **and**
+  `first_level_t1w/<subj>/<task>/{con}_0001.nii` (native). Same names, separate folders.
 - **Verify:** open `SPM.mat` (design looks right) and `wcon_0001.nii` (sensible activation,
   correct MNI alignment).
 
@@ -403,15 +428,27 @@ using a brainstem-tuned alignment.
 | Brainstem-nucleus ROIs (10b) | atlas grid-resampled in MNI (rougher) | **atlas warped to native via step05c** (precise) |
 | Best for | whole-brain / cortex, group maps, MNI coordinates | the small **brainstem nuclei** (NTS/LC/raphe) |
 
+### Where each route's files go (separate folders — no collision)
+Step 07 **defaults to `both`** and writes each route to its **own folder**, created
+automatically (and pre-built by **+ Create**):
+- **MNI route →** `…/derivatives/spm/first_level_mni/<subj>/<task>/` (`con`/`wcon` in MNI)
+- **T1w route →** `…/derivatives/spm/first_level_t1w/<subj>/<task>/` (`con` in native)
+
+The file **names are identical** in both routes (`con_0001.nii`, `wcon_0001.nii`,
+`SPM.mat`) — the **folder** is what separates them, so neither run can overwrite the other.
+Downstream defaults follow automatically: **step 08** reads `first_level_mni`; **step 10b**
+reads `first_level_t1w`. (In the GUI, `both` runs the two routes back-to-back; choosing
+`MNI` or `T1w` runs just that one into its own folder.)
+
 ### Which is better?
 **It depends on what you're measuring — and they're not mutually exclusive.** The
 brainstem nuclei are *exactly* where the whole-brain MNI warp is weakest, so that's where
 the native + step05c route pays off; everywhere else the MNI route is perfectly good.
 
-**Recommended:** run **both**.
+**The default (`both`) gives you both in one click** — each into its own folder:
 1. **MNI route** for the main analysis (cortex, whole-brain group maps, coordinates).
-2. **Native route** for the **brainstem ROI values** — set step 07 **Space = `both`** (or
-   `T1w`), then run **step10b** to extract NTS/LC/raphe with the step05c-refined atlas.
+2. **Native route** for the **brainstem ROI values** — then run **step10b** to extract
+   NTS/LC/raphe with the step05c-refined atlas.
 
 Note: even the native route still produces **MNI group maps** (step 07 also warps the
 contrast to MNI for step 08) — native space is used **only** at the ROI-extraction stage
@@ -503,10 +540,11 @@ That makes *your review* the safety net. Concretely:
       fmriprep/<subj>/                       fMRIPrep outputs (05) + HTML reports
       freesurfer/<subj>/                     recon-all + brainstem/pituitary labels (05b)
       brainstem_coreg/<subj>/                step05c refine warps
-      spm/first_level/<subj>/<task>/         GLM: con/wcon, SPM.mat (07)
-      spm/second_level/tasks|groups/         group analysis (08)
+      spm/first_level_mni/<subj>/<task>/     GLM — MNI route (07) → step08
+      spm/first_level_t1w/<subj>/<task>/     GLM — native route (07) → step10b
+      spm/second_level/tasks|groups/         group analysis (08, from first_level_mni)
       spm/second_level/thresholded/          step09 masks/t-maps
-      spm/second_level/roi/                  step10 roi_values.csv, spheres
+      spm/roi/                               step10 roi_values.csv, spheres; step10b native
   codes/qc/                                  ALL QC logs, audits, provenance, reports
   codes/SubjectList.txt, SubjectListBIDS.txt working subject lists
 ```

@@ -4744,7 +4744,10 @@ class FirstLevelPanel(ttk.Frame):
         # ── Vars ──────────────────────────────────────────────────────────────
         self._sublist_var = cfg["subjlist_bids"]
         self._firstlvl_var = tk.StringVar()
-        self._output_var   = tk.StringVar()
+        # Two SEPARATE route output roots (Task: no collision). 'both' writes each
+        # route to its own folder; both are auto-created on run.
+        self._out_mni_var  = tk.StringVar()   # MNI route  → spm/first_level_mni
+        self._out_t1w_var  = tk.StringVar()   # native/T1w → spm/first_level_t1w
         self._spm_var      = cfg["spm_dir"]
         self._matlab_var   = cfg["matlab_exe"]
         self._mcode_var    = cfg["matlab_code"]
@@ -4756,7 +4759,7 @@ class FirstLevelPanel(ttk.Frame):
         self._do_mni       = tk.BooleanVar(value=True)
         self._use_sourcedata = tk.BooleanVar(value=False)
         self._warp_only    = tk.BooleanVar(value=False)
-        self._space_var    = tk.StringVar(value="MNI")   # MNI (default) | T1w (legacy) | both (Task 06)
+        self._space_var    = tk.StringVar(value="both")  # both (default) | MNI | T1w — routes to separate folders
         self._restrict_bs  = tk.BooleanVar(value=False)   # restrict GLM to brainstem (Task 05 C2)
         self._bs_mask_var  = cfg["brainstem_mask"]        # shared brainstem mask path
         self._bs_smooth_var = tk.StringVar(value="")      # optional brainstem smoothing (mm)
@@ -4786,8 +4789,15 @@ class FirstLevelPanel(ttk.Frame):
                 var=self._sublist_var, label_width=22).pack(fill="x", pady=2)
         PathRow(pf, "First-level dir (step06):", mode="dir",
                 var=self._firstlvl_var, label_width=22).pack(fill="x", pady=2)
-        PathRow(pf, "Output dir:", mode="dir",
-                var=self._output_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "MNI output dir:", mode="dir",
+                var=self._out_mni_var, label_width=22).pack(fill="x", pady=2)
+        PathRow(pf, "T1w output dir:", mode="dir",
+                var=self._out_t1w_var, label_width=22).pack(fill="x", pady=2)
+        ttk.Label(pf, foreground="gray", wraplength=560,
+                  text=("Space='both' (default) writes each route to its OWN folder (auto-created): "
+                        "the MNI route → 'MNI output dir' (feeds step08 group), the native route → "
+                        "'T1w output dir' (feeds step10b brainstem ROIs). No collision.")
+                  ).pack(anchor="w", pady=(0, 2))
         PathRow(pf, "SPM12 dir:", mode="dir",
                 var=self._spm_var, label_width=22).pack(fill="x", pady=2)
         PathRow(pf, "MATLAB exe:", mode="file",
@@ -4828,10 +4838,10 @@ class FirstLevelPanel(ttk.Frame):
         ttk.Combobox(spr, textvariable=self._space_var, width=7, state="readonly",
                      values=["MNI", "T1w", "both"]).pack(side="left", padx=(4, 0))
         ttk.Label(pm, foreground="gray", wraplength=560,
-                  text=("'MNI' (default) models the fMRIPrep MNI BOLD directly (con already MNI → "
-                        "wcon_*, no SPM warp). 'T1w' (optional legacy) models the fMRIPrep T1w BOLD "
-                        "(con in T1w; optional SPM warp below — double-normalisation). 'both' does "
-                        "T1w in <subj>/<task> and MNI in <subj>/<task>/mni.")
+                  text=("'both' (default) runs BOTH routes into their separate folders above: the "
+                        "MNI route (con already MNI → wcon_*) and the native/T1w route (con in T1w; "
+                        "optional SPM warp below). 'MNI' or 'T1w' runs just that one route into its "
+                        "own folder. Use MNI for the main/group analysis, T1w for step10b brainstem ROIs.")
                   ).pack(anchor="w")
 
         ttk.Checkbutton(pm, text="Warp T1w contrasts to MNI (segment T1 → wcon_*.nii; legacy, only for T1w space)",
@@ -4934,8 +4944,10 @@ class FirstLevelPanel(ttk.Frame):
                      f"  *_space-T1w_desc-preproc_bold.nii.gz  +  *_space-T1w_desc-brain_mask.nii.gz")
             if not self._firstlvl_var.get():
                 self._firstlvl_var.set(str(Path(sd) / "derivatives" / "physio" / "first_level"))
-            if not self._output_var.get():
-                self._output_var.set(str(Path(sd) / "derivatives" / "spm" / "first_level"))
+            if not self._out_mni_var.get():
+                self._out_mni_var.set(str(Path(sd) / "derivatives" / "spm" / "first_level_mni"))
+            if not self._out_t1w_var.get():
+                self._out_t1w_var.set(str(Path(sd) / "derivatives" / "spm" / "first_level_t1w"))
         else:
             self._fmriprep_lbl.config(text="(set sourcedata in Setup)")
 
@@ -4954,53 +4966,89 @@ class FirstLevelPanel(ttk.Frame):
         if not sd:
             messagebox.showerror("Error", "Set sourcedata in Setup."); return
 
-        flvl   = self._firstlvl_var.get().strip()
-        out    = self._output_var.get().strip()
-        spm    = self._spm_var.get().strip()
-        matlab = self._matlab_var.get().strip()
-        mcode  = self._mcode_var.get().strip()
-        env    = self._env_var.get().strip() or "none"
-        ses    = self._session_var.get().strip() or "01"
-        run    = self._run_var.get().strip() or "01"
-        tr     = self._tr_var.get().strip() or "1.19"
-        smooth = self._smooth_var.get().strip() or "3"
-        do_mni = "1" if self._do_mni.get() else "0"
-        warp_only = "1" if self._warp_only.get() else "0"
-        use_sourcedata = "1" if self._use_sourcedata.get() else "0"
-        space = self._space_var.get().strip() or "T1w"
-        restrict_bs = "1" if self._restrict_bs.get() else "0"
-        bs_mask = self._bs_mask_var.get().strip()
-        bs_smooth = self._bs_smooth_var.get().strip()
+        space = self._space_var.get().strip() or "both"
+        out_mni = self._out_mni_var.get().strip()
+        out_t1w = self._out_t1w_var.get().strip()
 
-        cmd = [
-            "bash", script,
-            sublist, sd, flvl, out, spm, matlab, mcode,
-            ses, run, tr, smooth, do_mni, env, warp_only, use_sourcedata,
-            space, restrict_bs, bs_mask, bs_smooth,
-        ]
+        # Build the route jobs: each route runs as a single-space step07 into its OWN
+        # output folder, so the two routes never overwrite each other.
+        jobs = []
+        if space in ("both", "MNI"):
+            if not out_mni:
+                messagebox.showerror("Error", "Set the MNI output dir."); return
+            jobs.append(("MNI", out_mni))
+        if space in ("both", "T1w"):
+            if not out_t1w:
+                messagebox.showerror("Error", "Set the T1w output dir."); return
+            jobs.append(("T1w", out_t1w))
+        if not jobs:
+            messagebox.showerror("Error", f"Unknown space '{space}'."); return
+
+        self._jobs = jobs
+        self._job_ctx = {
+            "script": script, "sublist": sublist, "sd": sd,
+            "flvl":  self._firstlvl_var.get().strip(),
+            "spm":   self._spm_var.get().strip(),
+            "matlab": self._matlab_var.get().strip(),
+            "mcode": self._mcode_var.get().strip(),
+            "env":   self._env_var.get().strip() or "none",
+            "ses":   self._session_var.get().strip() or "01",
+            "run":   self._run_var.get().strip() or "01",
+            "tr":    self._tr_var.get().strip() or "1.19",
+            "smooth": self._smooth_var.get().strip() or "3",
+            "do_mni": "1" if self._do_mni.get() else "0",
+            "warp_only": "1" if self._warp_only.get() else "0",
+            "use_sourcedata": "1" if self._use_sourcedata.get() else "0",
+            "restrict_bs": "1" if self._restrict_bs.get() else "0",
+            "bs_mask": self._bs_mask_var.get().strip(),
+            "bs_smooth": self._bs_smooth_var.get().strip(),
+        }
 
         self._console.separator()
-        self._console.append("[Step 07] First-level GLM + MNI starting…", "info")
+        self._console.append(
+            f"[Step 07] First-level — running {len(jobs)} route(s): "
+            f"{', '.join(s for s, _ in jobs)}", "info")
         self._console.separator()
-
         self._run_btn.config(state="disabled")
         self._stop_btn.config(state="normal")
         self._progress.start(10)
-        self._status.set("Step 07 (first-level) running…")
+        self._run_jobs(0)
 
-        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
-                        on_line=self._console.append, on_done=self._done)
-
-    def _done(self, rc):
-        self._progress.stop()
-        self._run_btn.config(state="normal")
-        self._stop_btn.config(state="disabled")
-        if rc == 0:
+    def _run_jobs(self, idx):
+        if idx >= len(self._jobs):
+            self._progress.stop()
+            self._run_btn.config(state="normal")
+            self._stop_btn.config(state="disabled")
             self._status.set("Step 07 complete ✓")
-            self._console.append("[Step 07] First-level + MNI finished.", "ok")
-        else:
-            self._status.set(f"Step 07 failed (exit {rc})")
-            self._console.append(f"[Step 07] Failed (exit {rc}).", "error")
+            self._console.append("[Step 07] All routes finished.", "ok")
+            return
+        space, out = self._jobs[idx]
+        try:
+            os.makedirs(out, exist_ok=True)   # auto-create the route folder
+        except OSError as e:
+            self._console.append(f"[Step 07] Cannot create {out}: {e}", "error")
+        c = self._job_ctx
+        cmd = ["bash", c["script"], c["sublist"], c["sd"], c["flvl"], out,
+               c["spm"], c["matlab"], c["mcode"], c["ses"], c["run"], c["tr"],
+               c["smooth"], c["do_mni"], c["env"], c["warp_only"],
+               c["use_sourcedata"], space, c["restrict_bs"], c["bs_mask"], c["bs_smooth"]]
+        self._console.append(f"[Step 07] Route {space} → {out}", "info")
+        self._status.set(f"Step 07 ({space}) running…")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append,
+                         on_done=lambda rc, i=idx: self._job_done(rc, i))
+
+    def _job_done(self, rc, idx):
+        space = self._jobs[idx][0]
+        if rc != 0:
+            self._progress.stop()
+            self._run_btn.config(state="normal")
+            self._stop_btn.config(state="disabled")
+            self._status.set(f"Step 07 ({space}) failed (exit {rc})")
+            self._console.append(f"[Step 07] Route {space} failed (exit {rc}) — stopping.", "error")
+            return
+        self._console.append(f"[Step 07] Route {space} done.", "ok")
+        self._run_jobs(idx + 1)
 
     def _stop(self):
         """Stop the currently running process."""
@@ -5167,7 +5215,7 @@ class SecondLevelPanel(ttk.Frame):
         if not sd:
             return
         if not self._firstlvl_var.get():
-            self._firstlvl_var.set(str(Path(sd) / "derivatives" / "spm" / "first_level"))
+            self._firstlvl_var.set(str(Path(sd) / "derivatives" / "spm" / "first_level_mni"))
         if not self._taskroot_var.get():
             self._taskroot_var.set(str(Path(sd) / "derivatives" / "spm" / "second_level" / "tasks"))
         if not self._group_out.get():
@@ -5425,10 +5473,14 @@ class RoiPanel(ttk.Frame):
         self._roiatlas_var = cfg["brainstem_atlas"]  # labeled atlas (set once in Setup)
         self._roilabels_var = tk.StringVar() # atlas label values
         self._roinames_var  = tk.StringVar() # atlas label names
-        # Native-space nuclei ROIs via step05c composed warp (step10b)
-        self._nat_con_root_var = tk.StringVar()
+        # Native-space nuclei ROIs via step05c composed warp (step10b) — defaults to
+        # the native/T1w first-level route (first_level_t1w) and the spm/roi output.
+        _sd0 = cfg["sourcedata"].get().strip()
+        self._nat_con_root_var = tk.StringVar(
+            value=(str(Path(_sd0) / "derivatives" / "spm" / "first_level_t1w") if _sd0 else ""))
         self._nat_con_glob_var = tk.StringVar(value="*/con_0001.nii")
-        self._nat_out_var      = tk.StringVar()
+        self._nat_out_var      = tk.StringVar(
+            value=(str(Path(_sd0) / "derivatives" / "spm" / "roi" / "brainstem_native") if _sd0 else ""))
         self._rsmall_var  = tk.StringVar(value="5")
         self._rlarge_var  = tk.StringVar(value="10")
         self._python_var  = cfg["python_exe"]
@@ -6118,14 +6170,25 @@ class SidebarPanel(ttk.Frame):
             if not messagebox.askyesno(
                     "Exists", f"{proj} already exists. Create missing subfolders inside it?"):
                 return
-        # Project skeleton
+        # Project skeleton — full tree, incl. the SEPARATED first-level route folders
+        # (first_level_mni vs first_level_t1w) so the two analysis routes never collide.
         subdirs = [
             "codes",
+            "codes/qc",
+            "codes/logs",
             "rawdata",
             "sourcedata",
             "sourcedata/derivatives",
             "sourcedata/derivatives/fmriprep",
             "sourcedata/derivatives/freesurfer",
+            "sourcedata/derivatives/physio",
+            "sourcedata/derivatives/brainstem_coreg",        # step05c refine warps
+            "sourcedata/derivatives/spm/first_level_mni",     # MNI route (step07)
+            "sourcedata/derivatives/spm/first_level_t1w",     # native/T1w route (step07 → step10b)
+            "sourcedata/derivatives/spm/second_level/tasks",
+            "sourcedata/derivatives/spm/second_level/groups",
+            "sourcedata/derivatives/spm/second_level/thresholded",
+            "sourcedata/derivatives/spm/roi",
         ]
         try:
             for s in subdirs:
