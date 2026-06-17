@@ -44,7 +44,7 @@ step02_physioparse_v2.sh <mat_file> <bids_subject_id> \
 
 ## 4. Run
 ```bash
-bash step02_physioparse_v2.sh /path/to/7T1019HC042726.mat sub-7T1019HC042726
+bash step02_physioparse_v2.sh /path/to/7T0000XX010100.mat sub-7T0000XX010100
 ```
 
 ## 5. What it does

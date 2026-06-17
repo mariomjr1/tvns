@@ -122,9 +122,9 @@ set once in Setup.
 | `.h5` | A composite transform/warp file from fMRIPrep. |
 
 ### Two kinds of subject ID (don't mix them up)
-- **Raw scanner ID** — e.g. `7T1019HC_042726` (has an underscore). Goes in
+- **Raw scanner ID** — e.g. `7T0000XX_010100` (has an underscore). Goes in
   `SubjectList.txt`. Used by steps 00–01.
-- **BIDS ID** — e.g. `sub-7T1019HC042726` (underscore stripped, `sub-` prefix). Generated
+- **BIDS ID** — e.g. `sub-7T0000XX010100` (underscore stripped, `sub-` prefix). Generated
   by step 05 Part 1 into `SubjectListBIDS.txt`. Used by every step from 02/05 onward.
 
 ---

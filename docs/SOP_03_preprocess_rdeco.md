@@ -44,7 +44,7 @@ step03_preprocess_for_retroicor_v2.sh <bids_subject_id> \
 
 ## 4. Run (filtering)
 ```bash
-bash step03_preprocess_for_retroicor_v2.sh sub-7T1019HC042726
+bash step03_preprocess_for_retroicor_v2.sh sub-7T0000XX010100
 ```
 Per `task-*_run-*.mat` it writes:
 - `<subj>_task-*_run-*_filtered.mat` — physio struct for Step 05

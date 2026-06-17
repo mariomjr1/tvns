@@ -54,7 +54,7 @@ step04_retroicor_v2.sh <bids_subject_id> \
 
 ## 4. Run
 ```bash
-bash step04_retroicor_v2.sh sub-7T1019HC042726
+bash step04_retroicor_v2.sh sub-7T0000XX010100
 ```
 
 ## 5. What it does

@@ -55,9 +55,9 @@ step06_stim_v2.sh <bids_subject_id> \
 
 ## 4. Run
 ```bash
-bash step06_stim_v2.sh sub-7T1019HC042726
+bash step06_stim_v2.sh sub-7T0000XX010100
 # with QC plots:
-bash step06_stim_v2.sh sub-7T1019HC042726 "" "" "" "" "" 01 1.5 1.5 python3 1
+bash step06_stim_v2.sh sub-7T0000XX010100 "" "" "" "" "" 01 1.5 1.5 python3 1
 ```
 
 ## 5. What it does

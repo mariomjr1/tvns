@@ -22,7 +22,7 @@ Open the **Step 00 — Download DICOMs** panel (left nav).
 ## 2. Prerequisites
 - Logged into the workstation that has `findsession` on PATH and archive access.
 - `utility/SubjectList.txt` populated with **raw scanner IDs**, one per line
-  (e.g. `7T1019HC_042726`).
+  (e.g. `7T0000XX_010100`).
 - Write access to the output path (`rawdata/`).
 
 ## 3. Inputs
