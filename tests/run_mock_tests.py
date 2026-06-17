@@ -153,6 +153,24 @@ def shell_tests():
     r = run([s5c, str(sl2)])
     rec("shell", "step05c requires its inputs", "PASS" if r.returncode == 1 else "FAIL")
 
+    # step10b atlas->native ROIs (stub ANTs + stub python for roi_extract)
+    (fp / "sub-T/anat/sub-T_desc-preproc_T1w.nii.gz").write_text("x")            # native T1w
+    (fp / "sub-T/anat/sub-T_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5").write_text("x")
+    coreg = T / "coreg"; (coreg / "sub-T").mkdir(parents=True)
+    (coreg / "sub-T/sub-T_brainstemRefine_1InverseWarp.nii.gz").write_text("x")
+    atlas = T / "atlas.nii.gz"; atlas.write_text("x")
+    croot = T / "conroot"; (croot / "sub-T" / "BlockStim").mkdir(parents=True)
+    (croot / "sub-T/BlockStim/con_0001.nii").write_text("x")
+    (binp / "pystub").write_text('#!/bin/bash\nexit 0\n'); (binp / "pystub").chmod(0o755)
+    s10b = str(REPO / "step10b_atlas_native_roi_v2.sh")
+    r = run([s10b, str(sl2), str(fp), str(coreg), str(atlas), str(croot),
+             "*/con_0001.nii", str(T / "natroi_out"), str(binp / "pystub")])
+    rec("shell", "step10b atlas->native warp+extract (stubs)",
+        "PASS" if r.returncode == 0 and "atlas-in-native" in r.stdout else "FAIL")
+
+    r = run([s10b, str(sl2)])
+    rec("shell", "step10b requires its inputs", "PASS" if r.returncode == 1 else "FAIL")
+
 
 # ── 3. Python logic (synthetic fixtures) ──────────────────────────────────────
 def logic_tests():

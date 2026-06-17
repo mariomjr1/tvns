@@ -5425,6 +5425,10 @@ class RoiPanel(ttk.Frame):
         self._roiatlas_var = cfg["brainstem_atlas"]  # labeled atlas (set once in Setup)
         self._roilabels_var = tk.StringVar() # atlas label values
         self._roinames_var  = tk.StringVar() # atlas label names
+        # Native-space nuclei ROIs via step05c composed warp (step10b)
+        self._nat_con_root_var = tk.StringVar()
+        self._nat_con_glob_var = tk.StringVar(value="*/con_0001.nii")
+        self._nat_out_var      = tk.StringVar()
         self._rsmall_var  = tk.StringVar(value="5")
         self._rlarge_var  = tk.StringVar(value="10")
         self._python_var  = cfg["python_exe"]
@@ -5504,6 +5508,27 @@ class RoiPanel(ttk.Frame):
                         "Labeled atlas + label values (+ optional names) → one mean column per "
                         "nucleus. Leave X/Y/Z empty to run these alone.")).pack(anchor="w")
 
+        # Native-space nuclei ROIs (uses the step05c refinement; step10b)
+        nf = ttk.LabelFrame(self, text="Native-space nuclei ROIs (atlas via step05c composed warp)",
+                            padding=(10, 6))
+        nf.pack(fill="x", pady=(0, 8))
+        ttk.Label(nf, foreground="gray", wraplength=560,
+                  text=("Warps the brainstem atlas (Setup) into each subject's native space via "
+                        "fMRIPrep MNI→T1w ∘ step05c refine, then extracts per-nucleus means from "
+                        "the native (T1w-space) contrast. Needs step07 run with Space=T1w. Uses "
+                        "the BIDS list + fMRIPrep dir from Setup; SCAFFOLD — verify on cluster.")
+                  ).pack(anchor="w", pady=(0, 4))
+        PathRow(nf, "Native con root:", mode="dir",
+                var=self._nat_con_root_var, label_width=20).pack(fill="x", pady=2)
+        ngr = ttk.Frame(nf); ngr.pack(fill="x", pady=2)
+        ttk.Label(ngr, text="Con glob:", width=20, anchor="w").pack(side="left")
+        ttk.Entry(ngr, textvariable=self._nat_con_glob_var, width=24).pack(side="left")
+        PathRow(nf, "Output dir:", mode="dir",
+                var=self._nat_out_var, label_width=20).pack(fill="x", pady=2)
+        self._natroi_btn = ttk.Button(nf, text="▶ Atlas→native ROIs (step10b)",
+                                      command=self._run_native_roi)
+        self._natroi_btn.pack(anchor="w", pady=(2, 0))
+
         rf = ttk.LabelFrame(self, text="Sphere radii (mm)", padding=(10, 6))
         rf.pack(fill="x", pady=(0, 8))
         rr = ttk.Frame(rf); rr.pack(fill="x")
@@ -5562,6 +5587,50 @@ class RoiPanel(ttk.Frame):
         else:
             self._status.set(f"Step 10 failed (exit {rc})")
             self._console.append(f"[Step 10] Failed (exit {rc}).", "error")
+
+    def _run_native_roi(self):
+        """step10b: warp the atlas to native via step05c composed warp, extract nuclei."""
+        script = SCRIPTS_ROOT / "step10b_atlas_native_roi_v2.sh"
+        if not script.is_file():
+            messagebox.showerror("Error", f"Script not found:\n{script}"); return
+        cfg = self._cfg
+        subjlist = cfg["subjlist_bids"].get().strip()
+        fp_der   = cfg["fmriprep"].get().strip()
+        atlas    = cfg["brainstem_atlas"].get().strip()
+        if not subjlist or not os.path.isfile(subjlist):
+            messagebox.showerror("Error", "Set the BIDS subject list (Setup)."); return
+        if not fp_der or not os.path.isdir(fp_der):
+            messagebox.showerror("Error", "Set the fMRIPrep derivatives dir (Setup)."); return
+        if not atlas:
+            messagebox.showerror("Error", "Set the brainstem atlas (Setup)."); return
+        con_root = self._nat_con_root_var.get().strip()
+        out      = self._nat_out_var.get().strip()
+        if not con_root or not out:
+            messagebox.showerror("Error", "Set the native con root and output dir."); return
+        coreg_dir = str(Path(fp_der).parent / "brainstem_coreg")
+        con_glob  = self._nat_con_glob_var.get().strip() or "*/con_0001.nii"
+        cmd = ["bash", str(script), subjlist, fp_der, coreg_dir, atlas,
+               con_root, con_glob, out, cfg["python_exe"].get().strip(),
+               self._roilabels_var.get().strip(), self._roinames_var.get().strip()]
+
+        self._console.separator()
+        self._console.append("[Step 10b] atlas→native ROIs (via step05c composed warp)…", "info")
+        self._console.separator()
+        self._run_btn.config(state="disabled"); self._natroi_btn.config(state="disabled")
+        self._progress.start(10); self._status.set("Step 10b running…")
+
+        def _nat_done(rc):
+            self._progress.stop()
+            self._run_btn.config(state="normal"); self._natroi_btn.config(state="normal")
+            if rc == 0:
+                self._status.set("Step 10b complete ✓")
+                self._console.append("[Step 10b] group_brainstem_nuclei_native.csv written "
+                                     "(verify atlas-in-native overlay).", "ok")
+            else:
+                self._status.set(f"Step 10b failed (exit {rc})")
+                self._console.append(f"[Step 10b] Failed (exit {rc}).", "error")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append, on_done=_nat_done)
 
 
 # ── Step navigation dashboard ─────────────────────────────────────────────────
