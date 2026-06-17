@@ -51,6 +51,9 @@ _DEFAULTS = {
     # Brainstem mask (Task 05) — binary mask built by the Brainstem Mask tool;
     # shared so steps 07/08/09/10 can restrict the analysis to the brainstem.
     "brainstem_mask": "",
+    # Brainstem nuclei atlas (e.g. Brainstem Navigator, MNI space) — labeled NIfTI
+    # used by step10 for per-nucleus (NTS/LC/raphe) ROIs. Set once here.
+    "brainstem_atlas": "",
 }
 
 
@@ -438,6 +441,7 @@ class SetupPanel(ttk.Frame):
             ("RETROICOR code dir:",   "retro_code",  "dir",  None),
             ("R-DECO code dir:",      "rdeco_code",  "dir",  None),
             ("FreeSurfer 8.1+ home:", "freesurfer_home", "dir", None),
+            ("Brainstem atlas (NIfTI):", "brainstem_atlas", "file", [("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")]),
         ]
         for label, key, mode, filetypes in tool_rows:
             PathRow(tools_frame, label, mode=mode, filetypes=filetypes,
@@ -5418,7 +5422,7 @@ class RoiPanel(ttk.Frame):
         self._gmask_var   = tk.StringVar()   # 10 mm mask (manually selected)
         self._sigmask_var = tk.StringVar()   # optional step09 corrected significance mask
         self._roimask_var  = tk.StringVar()  # optional whole-mask ROI (e.g. brainstem) (C4)
-        self._roiatlas_var = tk.StringVar()  # optional labeled atlas (per-nucleus means)
+        self._roiatlas_var = cfg["brainstem_atlas"]  # labeled atlas (set once in Setup)
         self._roilabels_var = tk.StringVar() # atlas label values
         self._roinames_var  = tk.StringVar() # atlas label names
         self._rsmall_var  = tk.StringVar(value="5")
