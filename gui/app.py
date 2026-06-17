@@ -6180,6 +6180,8 @@ class SidebarPanel(ttk.Frame):
             return
         self._cfg["out_path"].set(str(Path(pr) / "rawdata"))
         self._cfg["sourcedata"].set(str(Path(pr) / "sourcedata"))
+        # fMRIPrep derivatives live under the project's sourcedata
+        self._cfg["fmriprep"].set(str(Path(pr) / "sourcedata" / "derivatives" / "fmriprep"))
         # Subject lists live in <project>/codes/
         self._cfg["subjlist"].set(str(Path(pr) / "codes" / "SubjectList.txt"))
         self._cfg["subjlist_bids"].set(str(Path(pr) / "codes" / "SubjectListBIDS.txt"))

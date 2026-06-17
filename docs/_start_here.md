@@ -157,53 +157,66 @@ Run the app (e.g. `python gui/app.py`). The window has:
 
 ---
 
-## D. Setup tab — fill the paths once
+## D. Project & Setup (do this first)
 
-### First: point at a project (left "Project" sidebar)
-The **Project** bar on the left chooses *which study you're working on* — and can build a
-fresh one for you:
-- **Folder + `…`** — pick an **existing** project folder. The GUI auto-fills `rawdata/`,
-  `sourcedata/`, and the subject lists under it.
-- **New: `<name>` + `+ Create`** — **scaffolds a brand-new project**: it creates the whole
-  folder tree (rawdata, sourcedata, every `derivatives/` subfolder **including the two
-  separated first-level routes `spm/first_level_mni` and `spm/first_level_t1w`**,
-  `second_level/{tasks,groups,thresholded}`, `roi`, `brainstem_coreg`, `codes/{qc,logs}`)
-  and switches to it. Use **Create** for a new study; use **Folder** to *continue an
-  existing one*.
-- **✓ Check** — *inventories* the project (it does **not** change anything): counts the
-  subjects in rawdata/sourcedata, lists every `derivatives/` subfolder + the subject lists,
-  reports what changed since last time, and saves a snapshot to `project_inventory.json`
-  (plus a dated log in `codes/logs/`). It runs automatically on launch and whenever the
-  project folder changes — it's your "what's in this project right now?" view.
+Before running any step you do three things, in order: **(1) create or open a project →
+(2) it builds the folder structure → (3) fill the Setup paths** (most fill themselves).
 
-### Save / Load config (top header buttons)
-- **💾 Save config** writes **all** the Setup paths to a JSON file.
-- **📂 Load config** reads them back in. So you configure a project once, save it, and
-  reload it next session (or hand it to a colleague) — nothing is hardcoded in the code.
+### D.1 — Create or open a project (left "Project" sidebar)
+- **🆕 Create a new study** — type a name in **New:** and click **+ Create**. It
+  **scaffolds the entire folder tree** under `<parent>/<name>/` (see D.2) and switches to it.
+- **📂 Open an existing study** — point **Folder** (the `…` picker) at an existing project.
+- **✓ Check** — *inventories* the project **without changing anything**: counts subjects in
+  rawdata/sourcedata, lists every `derivatives/` subfolder + the subject lists, and reports
+  what changed since last time (saved to `project_inventory.json` + a dated `codes/logs/`
+  snapshot). It runs on launch and whenever the project changes — your live "what's in this
+  project right now?" view.
 
-### Then: fill the path fields (once)
-Set these **once**; every step reuses them. If a path is wrong, the step that needs it
-tells you (it won't guess or invent a path). **What to put in each field:**
+> **Create vs Open:** Create when starting a brand-new study (it makes the folders); Open to
+> continue one that already has them.
 
-| Setup field | What it is | Typical value / note |
+### D.2 — The folder structure it creates
+**+ Create** builds the tree below once; **Open** expects it to already exist. Each step
+reads/writes its matching folder, so you rarely touch these by hand — the only file you fill
+yourself is `codes/SubjectList.txt` (raw scanner IDs, before step 00).
+
+![Project folder structure](images/project_structure.png)
+
+### D.3 — Setup paths: what's automatic vs what you set
+Open **Setup**. The instant you Create/Open a project, the **project-relative** paths fill
+themselves — you only set the **tool installs** and the **atlas**. The **Set by** column:
+**auto** = filled from the project root · **default** = sensible repo default (usually leave
+it) · **you** = your machine/cluster, set once.
+
+| Setup field | Set by | What to put |
 |---|---|---|
-| **Raw data path** | Where downloaded DICOMs go | `<project>/rawdata` |
-| **BIDS sourcedata** | The tidy dataset root | `<project>/sourcedata` |
-| **Heuristic file** | Rules that map scans → BIDS names | `utility/heuristic.py` (or one you build) |
-| **Env activate script** | The heudiconv Python env | lab `env/heudiconv/bin/activate` |
-| **SubjectList.txt** | Raw scanner IDs (one per line) | step 00/01 input |
-| **fMRIPrep derivatives** | Where fMRIPrep writes | `sourcedata/derivatives/fmriprep` |
-| **SPM12 dir** | SPM install | for steps 07–10 |
-| **MATLAB exe** | MATLAB binary | `matlab` (or full path) |
-| **MATLAB code dir** | This repo's `.m` files | `utility/matlab_code` |
-| **Environment script** | The cluster env for fMRIPrep/MATLAB steps | `utility/fmriprep_env.sh` |
-| **Python exe** | Python for the Python steps | usually auto-filled |
-| **RETROICOR / R-DECO code dirs** | Those toolboxes | `utility/retroicor`, `utility/r-deco-master` |
-| **FreeSurfer 8.1+ home** | FreeSurfer ≥ 8.1 install | needed for pituitary seg (05b) + brainstem steps; the seg/coreg scripts source `<home>/SetUpFreeSurfer.sh` |
-| **Brainstem atlas (NIfTI)** | Labeled brainstem-nuclei map (MNI) | e.g. Brainstem Navigator; used by step 10 / 10b |
+| Raw data path | **auto** | `<project>/rawdata` (downloaded DICOMs) |
+| BIDS sourcedata | **auto** | `<project>/sourcedata` (BIDS dataset) |
+| fMRIPrep derivatives | **auto** | `<project>/sourcedata/derivatives/fmriprep` |
+| SubjectList.txt | **auto** | `<project>/codes/SubjectList.txt` (you fill its *contents* — raw IDs) |
+| Heuristic file | default | `utility/heuristic.py` (or one you build in step 01) |
+| MATLAB code dir | default | `utility/matlab_code` |
+| RETROICOR / R-DECO dirs | default | `utility/retroicor`, `utility/r-deco-master` |
+| Python exe | default | auto-detected; change only for a specific env |
+| **FreeSurfer 8.1+ home** | **you** | your FreeSurfer ≥ 8.1 install (steps 05b/05c) |
+| **SPM12 dir** | **you** | your SPM12 install (steps 07–10) |
+| **MATLAB exe** | **you** | `matlab` or the full binary path |
+| **Environment script** | **you** | `utility/fmriprep_env.sh` (cluster env for fMRIPrep/MATLAB steps) |
+| **Env activate script** | **you** | the heudiconv venv `…/bin/activate` (step 01) |
+| **Brainstem atlas (NIfTI)** | **you** | your Brainstem Navigator (MNI) file (steps 10/10b) |
 
-> The two **first-level route folders** (`first_level_mni`, `first_level_t1w`) are created
-> by **+ Create** and filled by step 07 — you don't set them in Setup (see Section F).
+The two first-level route folders (`first_level_mni`, `first_level_t1w`) are **not** Setup
+fields — **+ Create** makes them and step 07 fills them (see [Section F](#f-the-two-analysis-routes)).
+
+### D.4 — Save / Load config (top header buttons)
+Your Setup is just a set of paths, so you can **save it and reuse it**:
+- **💾 Save config** — writes **all** the Setup fields to a JSON file you choose.
+- **📂 Load config** — reads them back in.
+
+Configure a study once, **Save config**, and next session — or on another machine, or for a
+colleague — **Load config** restores every path instantly. Nothing is hardcoded in the code,
+and you never re-type paths. *Tip:* keep one config JSON per study (e.g. next to the project
+folder), so "open this study" = Load its config.
 
 ---
 
