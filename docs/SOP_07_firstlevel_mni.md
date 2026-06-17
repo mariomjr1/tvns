@@ -17,7 +17,16 @@ available as an optional sensitivity/comparison route. Masks and BOLDs are
 **located in place** in `derivatives/fmriprep/` — there is no copy step.
 
 ## GUI (in the app)
-Open the **Step 07 — First-level** panel. **Space defaults to `both`**, which runs **both
+Step 07 has two tabs: **First-level GLM** and **Brainstem mask**.
+
+**Brainstem mask tab** (build it *before* running, if you want brainstem restriction):
+from your brainstem atlas + a reference grid (an fMRIPrep MNI BOLD or a `wcon_*.nii`),
+**▶ Build brainstem mask** writes an MNI binary mask and stores its path in
+`cfg['brainstem_mask']`. That same mask is then reused by step 07's "Restrict GLM to
+brainstem" option **and** by step 09 (threshold) and step 10 (ROI). (This was the
+standalone "Brainstem Mask" tool — now a sub-tab of step 07, its first consumer.)
+
+**First-level GLM tab.** **Space defaults to `both`**, which runs **both
 routes into separate, auto-created folders**: the **MNI route** → `MNI output dir`
 (`derivatives/spm/first_level_mni`, feeds step08) and the **native route** → `T1w output
 dir` (`derivatives/spm/first_level_t1w`, feeds step10b). Pick `MNI` or `T1w` to run just

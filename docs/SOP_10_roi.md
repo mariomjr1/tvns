@@ -52,7 +52,7 @@ step10_ROI.sh <X> <Y> <Z> <wcon_dir> <output_dir> \
 | `roi_label_names` (arg 17) | optional names for the labels (same order, e.g. `"NTS,LC"`) | (label#) |
 
 > **Mask / atlas ROIs (Task 05 C4)** are coordinate-free — give a `roi_mask` (whole-mask mean,
-> e.g. the brainstem mask from the Brainstem Mask tool) and/or a `roi_atlas` + `roi_labels` for
+> e.g. the brainstem mask built in **step 07 → "Brainstem mask" tab**) and/or a `roi_atlas` + `roi_labels` for
 > per-nucleus means (NTS/LC/raphe…). Resampled nearest-neighbour to the wcon grid. The GUI has
 > a "Mask / atlas ROIs" section; leave X/Y/Z empty to run these alone.
 

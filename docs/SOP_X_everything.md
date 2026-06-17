@@ -335,9 +335,12 @@ the matching numbered SOP (linked).
 - **Space (the key choice):** **`both` (default)** runs *both* routes into **separate
   folders** (`first_level_mni` + `first_level_t1w`); pick `MNI` or `T1w` to run just one.
   (See [Section F](#f-the-two-analysis-routes).)
-- **GUI:** *Step 07* panel → set **Space** (defaults to `both`), smoothing/TR if changing
-  defaults → **Run**. With `both` it runs the MNI route then the T1w route, each into its
-  own auto-created folder. The *07b* panel warps a single existing con folder to MNI.
+- **GUI (tabs):** **First-level GLM** + **Brainstem mask**. On *First-level GLM*: set
+  **Space** (defaults to `both`), smoothing/TR → **Run** (with `both` it runs the MNI route
+  then the T1w route, each into its own auto-created folder). The **Brainstem mask** tab is
+  the embedded mask builder — from an atlas + reference grid it writes the MNI brainstem
+  mask used by step 07's "restrict to brainstem" option and by steps 09/10. The *07b* panel
+  warps a single existing con folder to MNI.
 - **Out:** `first_level_mni/<subj>/<task>/{con,wcon}_0001.nii` (MNI) **and**
   `first_level_t1w/<subj>/<task>/{con}_0001.nii` (native). Same names, separate folders.
 - **Verify:** open `SPM.mat` (design looks right) and `wcon_0001.nii` (sensible activation,

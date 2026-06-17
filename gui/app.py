@@ -5956,6 +5956,26 @@ class BrainstemMaskPanel(ttk.Frame):
             self._console.append(f"[Brainstem mask] failed (exit {rc}).", "error")
 
 
+# ── Step 07 Panel (First-level GLM + the Brainstem-mask builder it uses) ─────────
+
+class Step07Panel(ttk.Frame):
+    """Inner notebook: First-level GLM | Brainstem mask.
+
+    The Brainstem-mask builder lives here because step 07 is the first consumer of the
+    mask (the 'Restrict GLM to brainstem' option); the built mask path is shared via
+    cfg['brainstem_mask'] so steps 09/10 pick it up automatically."""
+
+    def __init__(self, parent, cfg: dict, console: Console,
+                 status_var: tk.StringVar, runner: ScriptRunner, **kwargs):
+        super().__init__(parent, padding=(6, 6), **kwargs)
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True)
+        self._firstlevel = FirstLevelPanel(nb, cfg, console, status_var, runner)
+        self._bsmask     = BrainstemMaskPanel(nb, cfg, console, status_var, runner)
+        nb.add(self._firstlevel, text="  First-level GLM  ")
+        nb.add(self._bsmask,     text="  Brainstem mask  ")
+
+
 # ── Project sidebar ────────────────────────────────────────────────────────────
 
 class SidebarPanel(ttk.Frame):
@@ -6261,13 +6281,13 @@ class App(tk.Tk):
         t_preproc = panel(PreprocRdecoPanel,    cfg, console, status_var, runner)
         t_retroicor = panel(RetroicorPanel,    cfg, console, status_var, runner)
         t_stim = panel(StimPanel,    cfg, console, status_var, runner)
-        t_firstlevel = panel(FirstLevelPanel,    cfg, console, status_var, runner)
+        t_firstlevel = panel(Step07Panel,    cfg, console, status_var, runner)
         t_secondlevel = panel(SecondLevelPanel,    cfg, console, status_var, runner)
         t_threshold = panel(ThresholdPanel,    cfg, console, status_var, runner)
         t_roi = panel(RoiPanel,    cfg, console, status_var, runner)
-        # Heuristic builder is now embedded in Step 01 → "Sequences (heuristic)" tab.
+        # Heuristic builder is now embedded in Step 01 → "Sequences (heuristic)" tab;
+        # the Brainstem-mask builder is embedded in Step 07 → "Brainstem mask" tab.
         t_qc     = panel(QCPanel,        cfg, console, status_var, runner)
-        t_bsmask = panel(BrainstemMaskPanel, cfg, console, status_var, runner)
 
         nav.add("⚙  Setup",               t_setup,  section="Config")
         # NEW ORDER: RETROICOR (native, physio image-correction) runs BEFORE fMRIPrep.
@@ -6283,7 +6303,6 @@ class App(tk.Tk):
         nav.add("09  Threshold p<0.05",   t_threshold)
         nav.add("10  ROI extraction",     t_roi)
         nav.add("⬡  QC Snapshots",        t_qc,     section="Tools")
-        nav.add("⊟  Brainstem Mask",      t_bsmask)
 
         # Expose console/status so Save/Load config can report progress
         self._console    = console
