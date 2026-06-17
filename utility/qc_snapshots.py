@@ -52,15 +52,19 @@ except ImportError:
 # NEW ORDER (RETROICOR → fMRIPrep): physio is removed from the BOLD in native
 # space before fMRIPrep, so the fMRIPrep images below are physio-cleaned.
 STEPS = [
-    ("01", "raw_bold",        "Raw BOLD (BIDS)"),
-    ("02", "raw_t1w",         "Raw T1w (BIDS)"),
-    ("03", "retro_corrected", "RETROICOR-corrected BOLD (native)"),
-    ("04", "fmriprep_t1w",    "fMRIPrep T1w-space BOLD (physio-clean)"),
-    ("05", "fmriprep_mni",    "fMRIPrep MNI-space BOLD (physio-clean)"),
-    ("06", "brain_mask",      "fMRIPrep brain mask"),
-    ("07", "t1_preproc",      "fMRIPrep T1w preprocessed"),
-    ("08", "first_level_con", "First-level contrast (con_0001)"),
-    ("09", "mni_wcon",        "MNI-warped contrast (wcon_0001)"),
+    ("01",  "raw_bold",        "Raw BOLD (BIDS)"),
+    ("02",  "raw_t1w",         "Raw T1w (BIDS)"),
+    ("03",  "retro_corrected", "RETROICOR-corrected BOLD (native)"),
+    ("04",  "fmriprep_t1w",    "fMRIPrep T1w-space BOLD (physio-clean)"),
+    ("05",  "fmriprep_mni",    "fMRIPrep MNI-space BOLD (physio-clean)"),
+    ("05b", "brainstem_seg",   "Brainstem substructures (FreeSurfer, step05b)"),
+    ("05b", "pituitary_seg",   "Pituitary/pineal (PGlandsSeg, step05b)"),
+    ("06",  "brain_mask",      "fMRIPrep brain mask"),
+    ("07",  "t1_preproc",      "fMRIPrep T1w preprocessed"),
+    ("07m", "brainstem_mask",  "Brainstem mask (MNI restriction; step07 tab)"),
+    ("08",  "first_level_mni", "First-level wcon — MNI route (first_level_mni)"),
+    ("08b", "first_level_t1w", "First-level con — native route (first_level_t1w)"),
+    ("10b", "atlas_native",    "Atlas-in-native overlay (step10b)"),
 ]
 
 STEP_MAP = {s[1]: s for s in STEPS}  # name -> (num, name, desc)
@@ -88,7 +92,13 @@ def locate_step_files(project_root: str, sourcedata: str, bids_subj: str) -> dic
     """
     sd = Path(sourcedata)
     fp_der = sd / "derivatives" / "fmriprep"
-    spm_fl = sd / "derivatives" / "spm" / "first_level"
+    spm     = sd / "derivatives" / "spm"
+    spm_fl  = spm / "first_level"            # legacy single-route (fallback)
+    spm_mni = spm / "first_level_mni"        # MNI route (step07)
+    spm_t1w = spm / "first_level_t1w"        # native/T1w route (step07 → step10b)
+    fs_mri  = sd / "derivatives" / "freesurfer" / bids_subj / "mri"   # step05b
+    bs_dir  = sd / "derivatives" / "brainstem"                        # brainstem mask
+    roi_nat = spm / "roi" / "brainstem_native" / bids_subj           # step10b
 
     # Session label — check for ses-01 first, then any session
     def _ses_dir(base: Path, sub: str) -> Path | None:
@@ -127,10 +137,24 @@ def locate_step_files(project_root: str, sourcedata: str, bids_subj: str) -> dic
         "brain_mask":      _try(fp_func, "*_space-T1w_desc-brain_mask.nii.gz")
                            or _try(fp_anat, "*_desc-brain_mask.nii.gz"),
         "t1_preproc":      _try(fp_anat, "*_desc-preproc_T1w.nii.gz"),
-        "first_level_con": _glob_first(spm_fl / bids_subj, "*/con_0001.nii")
-                           if (spm_fl / bids_subj).is_dir() else None,
-        "mni_wcon":        _glob_first(spm_fl / bids_subj, "*/wcon_0001.nii")
-                           if (spm_fl / bids_subj).is_dir() else None,
+        # step05b — FreeSurfer brainstem substructures + PGlandsSeg (subject space)
+        "brainstem_seg":   _glob_first(fs_mri, "brainstemSsLabels*.mgz"),
+        "pituitary_seg":   _glob_first(fs_mri, "*glands*.mgz")
+                           or _glob_first(fs_mri, "*pituitary*.mgz"),
+        # Brainstem mask (study-level MNI restriction; built in the step07 tab)
+        "brainstem_mask":  _glob_first(bs_dir, "*mask*.nii.gz")
+                           or _glob_first(bs_dir, "*mask*.nii"),
+        # Two first-level routes (fall back to the legacy single first_level/)
+        "first_level_mni": (_glob_first(spm_mni / bids_subj, "*/wcon_0001.nii")
+                            if (spm_mni / bids_subj).is_dir() else None)
+                           or (_glob_first(spm_fl / bids_subj, "*/wcon_0001.nii")
+                               if (spm_fl / bids_subj).is_dir() else None),
+        "first_level_t1w": (_glob_first(spm_t1w / bids_subj, "*/con_0001.nii")
+                            if (spm_t1w / bids_subj).is_dir() else None)
+                           or (_glob_first(spm_fl / bids_subj, "*/con_0001.nii")
+                               if (spm_fl / bids_subj).is_dir() else None),
+        # step10b — atlas warped into native space (the overlay to eyeball)
+        "atlas_native":    _glob_first(roi_nat, "*atlas-in-native.nii.gz"),
     }
     return locs
 

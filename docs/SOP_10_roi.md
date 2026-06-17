@@ -102,7 +102,8 @@ For named brainstem nuclei (NTS/LC/raphe), use a labeled atlas instead of sphere
   **native con root defaults to `derivatives/spm/first_level_t1w`** (the native route) and
   output to `derivatives/spm/roi/brainstem_native`.
   **SCAFFOLD:** verify the atlas-in-native overlay on the cluster before trusting the
-  numbers (the transform direction/order must be confirmed there).
+  numbers (the transform direction/order must be confirmed there). The **QC snapshots**
+  tool now renders an `atlas_native` montage so you can eyeball this placement.
 
 ## 7. Troubleshooting
 | Symptom | Cause / fix |

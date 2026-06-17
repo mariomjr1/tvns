@@ -499,7 +499,7 @@ These **don't change your data** — they check it and write logs (mostly under
 
 | Tool (button) | What it checks | Output |
 |---|---|---|
-| **QC snapshots** | Quick brain-image thumbnails per step (catch gross errors) | image grids in `codes/qc/` |
+| **QC snapshots** | Brain-image thumbnails per step — now incl. **brainstem seg (05b), the brainstem mask, both first-level routes (MNI/T1w), and the atlas-in-native overlay (10b)** | montages in `codes/qc/` |
 | **FD QC** | Per-subject head motion (flag only — never exclude) | `qc_fd_summary.json` |
 | **Cardinality audit** | Volume/file counts match across **every** stage (dropped/duplicated scans) | `codes/qc/` audit |
 | **SDC audit** | Distortion correction was **applied** per run (not just available) | `group_sdc_audit.{csv,md}` |
