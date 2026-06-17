@@ -358,19 +358,69 @@ the matching numbered SOP (linked).
 
 ## F. The two analysis routes
 
-There are two ways the analysis can run; you choose at step 07 (the **Space**):
+This is the part people find confusing, so here it is slowly. You choose the route at
+**step 07 (the "Space" setting).**
 
+### What "space" means (the core idea)
+Every brain is a slightly different shape. To compare subjects, or to drop an atlas of
+nuclei onto someone, you must pick **whose coordinate system you work in**:
+- **MNI space** = a shared "standard template brain." You **warp each subject onto the
+  template.** Great for group stats and reporting coordinates — but the warp is computed
+  for the **whole brain**, so the tiny, low-contrast **brainstem is aligned only loosely.**
+- **Native (T1w) space** = each subject **stays in their own brain** (nothing is squished
+  onto a template). The BOLD is aligned to that subject's own anatomy (a tight, local
+  alignment called **BBR**), so the brainstem stays faithfully where it really is.
+
+**Analogy:** the MNI route *moves every brain to a shared map and measures there*; the
+native route *leaves each brain where it is and instead brings the map (atlas) to them*,
+using a brainstem-tuned alignment.
+
+### Route 1 — MNI (default)
+- The GLM (07) models the **MNI** BOLD (fMRIPrep already warped it with its whole-brain
+  warp); ROIs (10) put the MNI atlas directly on the MNI maps.
+- **Does NOT use the brainstem registration (step05c).** The functional data reached MNI
+  through the loose whole-brain warp, and step05c never touches this path — so the
+  brainstem is only roughly placed.
+
+### Route 2 — Native / T1w (this one uses the brainstem registration)
+- The GLM (07, Space=`T1w`/`both`) models the **native T1w** BOLD — the brainstem stays
+  exactly where it is in that subject.
+- ROIs (**step10b**): instead of pushing the subject to MNI, it **brings the atlas to the
+  subject**, warping it into native space through the **composed transform
+  `fMRIPrep MNI→T1w ∘ step05c refine`**.
+- **This is the only route that uses step05c.** Both the functional data *and* the atlas
+  end up best-aligned in the brainstem.
+
+> **So: which one co-registers with the brainstem registration?** Only the **native /
+> T1w route (via step10b)**. The MNI route ignores step05c.
+
+### Side by side
 | | **MNI route (default)** | **Native / T1w route** |
 |---|---|---|
-| First-level (07) | models the fMRIPrep **MNI** BOLD | models the **T1w** BOLD |
-| Group/threshold (08–09) | uses `wcon` (already MNI) | warps con→MNI for the group test |
-| ROIs (10) | atlas in MNI ↔ MNI maps (works now) | — |
-| Brainstem ROIs (10b) | atlas grid-resampled in MNI | **atlas warped to native via 05c** ← most precise for nuclei |
-| When to use | the standard whole-brain + cortical analysis | when you specifically want the **best brainstem-nucleus** measurements |
+| First-level GLM (07) | models the fMRIPrep **MNI** BOLD | models the **native T1w** BOLD |
+| Group/threshold (08–09) | uses `wcon` (already MNI) | also warps con→MNI for the group test |
+| Uses step05c brainstem refinement? | **No** | **Yes** (in step10b) |
+| Brainstem-nucleus ROIs (10b) | atlas grid-resampled in MNI (rougher) | **atlas warped to native via step05c** (precise) |
+| Best for | whole-brain / cortex, group maps, MNI coordinates | the small **brainstem nuclei** (NTS/LC/raphe) |
 
-**Practical guidance:** run the **MNI route** for the main analysis. If brainstem nuclei
-are a focus, *also* run step 07 with **Space=T1w** (or `both`) so step 10b can warp the
-atlas into native space through the 05c refinement.
+### Which is better?
+**It depends on what you're measuring — and they're not mutually exclusive.** The
+brainstem nuclei are *exactly* where the whole-brain MNI warp is weakest, so that's where
+the native + step05c route pays off; everywhere else the MNI route is perfectly good.
+
+**Recommended:** run **both**.
+1. **MNI route** for the main analysis (cortex, whole-brain group maps, coordinates).
+2. **Native route** for the **brainstem ROI values** — set step 07 **Space = `both`** (or
+   `T1w`), then run **step10b** to extract NTS/LC/raphe with the step05c-refined atlas.
+
+Note: even the native route still produces **MNI group maps** (step 07 also warps the
+contrast to MNI for step 08) — native space is used **only** at the ROI-extraction stage
+(step10b), which is the one place brainstem precision matters.
+
+> **Caveat:** step05c + step10b are **scaffolds** — validate the transform chain on the
+> cluster with an **atlas-in-native overlay** (does the atlas land on the actual brainstem
+> nuclei?) before trusting the native brainstem ROI numbers. Until then, the MNI atlas
+> ROIs are a rougher fallback.
 
 ---
 
