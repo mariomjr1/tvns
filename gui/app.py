@@ -2460,9 +2460,36 @@ class QCPanel(ttk.Frame):
         ttk.Button(btn_row, text="Open QC folder",
                    command=self._open_folder).pack(side="left", padx=(16, 0))
 
+        # ── Unified QC digest (all step flags + fMRIPrep motion) ─────────────
+        dg = ttk.LabelFrame(
+            self, text="Unified QC digest — every step's flags + fMRIPrep motion (FD, %movement)",
+            padding=(8, 4))
+        dg.pack(fill="both", expand=True, pady=(10, 0))
+        dgr = ttk.Frame(dg); dgr.pack(fill="x", pady=(0, 4))
+        self._digest_btn = ttk.Button(dgr, text="↻ Generate / Refresh QC digest",
+                                      command=self._run_digest)
+        self._digest_btn.pack(side="left")
+        self._digest_lbl = ttk.Label(dgr, foreground="#6a6a6a", text="(not yet generated)")
+        self._digest_lbl.pack(side="left", padx=(10, 0))
+        ttk.Label(dg, foreground="gray", wraplength=620,
+                  text=("One row per subject: mean FD + % high-motion volumes, MNI-BOLD, SDC, "
+                        "cardinality, piezo, contrast, ROI geometry. status=REVIEW means ≥1 flag "
+                        "to read (never an automatic exclusion). → codes/qc/qc_digest.csv/.md")
+                  ).pack(anchor="w", pady=(0, 4))
+        dtv = ttk.Frame(dg); dtv.pack(fill="both", expand=True)
+        self._dtv = ttk.Treeview(dtv, show="headings", height=8)
+        dvsb = ttk.Scrollbar(dtv, orient="vertical", command=self._dtv.yview)
+        dhsb = ttk.Scrollbar(dtv, orient="horizontal", command=self._dtv.xview)
+        self._dtv.configure(yscrollcommand=dvsb.set, xscrollcommand=dhsb.set)
+        dvsb.pack(side="right", fill="y"); dhsb.pack(side="bottom", fill="x")
+        self._dtv.pack(side="left", fill="both", expand=True)
+        self._dtv.tag_configure("ok", foreground="#4ec9b0")
+        self._dtv.tag_configure("review", foreground="#f4a747")
+
         # Initial scan
         self._scan_subjects()
         self._refresh_manifest()
+        self._load_digest()
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -2800,6 +2827,66 @@ class QCPanel(ttk.Frame):
             subprocess.Popen(["open", str(qd)])
         except Exception:
             messagebox.showinfo("QC folder", str(qd))
+
+    # ── Unified QC digest ──────────────────────────────────────────────────────
+    def _digest_csv(self):
+        qd = self._qc_dir()
+        return (qd / "qc_digest.csv") if qd else None
+
+    def _run_digest(self):
+        """Aggregate every step's flags + fMRIPrep motion into one CSV (real-time)."""
+        script = SCRIPTS_ROOT / "utility" / "qc_digest.py"
+        sd = self._cfg["sourcedata"].get().strip()
+        if not sd or not os.path.isdir(sd):
+            messagebox.showerror("Error", "Set the sourcedata path in Setup first."); return
+        if not script.is_file():
+            messagebox.showerror("Error", f"Not found:\n{script}"); return
+        out = self._digest_csv()
+        py = self._cfg.get("python_exe", tk.StringVar()).get().strip() or "python3"
+        cmd = [py, str(script), "--sourcedata", sd]
+        if out:
+            cmd += ["--output", str(out)]
+        self._console.separator()
+        self._console.append("[qc_digest] aggregating all step flags + fMRIPrep motion…", "info")
+        self._digest_btn.config(state="disabled"); self._progress.start(10)
+        self._status.set("Building QC digest…")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append, on_done=self._digest_done)
+
+    def _digest_done(self, rc: int):
+        self._progress.stop(); self._digest_btn.config(state="normal")
+        if rc == 0:
+            self._status.set("QC digest ready ✓")
+            self._console.append("[qc_digest] done — see codes/qc/qc_digest.csv (+ .md).", "ok")
+        else:
+            self._status.set(f"QC digest failed (exit {rc})")
+            self._console.append(f"[qc_digest] failed (exit {rc}).", "error")
+        self._load_digest()
+
+    def _load_digest(self):
+        """Load codes/qc/qc_digest.csv into the digest table (color by status)."""
+        self._dtv.delete(*self._dtv.get_children())
+        p = self._digest_csv()
+        if not p or not p.is_file():
+            self._digest_lbl.config(text="(not yet generated)")
+            return
+        with open(p, newline="") as f:
+            reader = csv.DictReader(f)
+            cols = reader.fieldnames or []
+            self._dtv.configure(columns=cols)
+            for c in cols:
+                self._dtv.heading(c, text=c)
+                self._dtv.column(c, width=(200 if c == "subject" else 78),
+                                 anchor=("w" if c == "subject" else "center"),
+                                 stretch=(c == "subject"))
+            n = nrev = 0
+            for row in reader:
+                n += 1
+                tag = "review" if row.get("status") == "REVIEW" else "ok"
+                if tag == "review":
+                    nrev += 1
+                self._dtv.insert("", "end", values=[row.get(c, "") for c in cols], tags=(tag,))
+        self._digest_lbl.config(text=f"{n} subject(s) · {nrev} to review · {p}")
 
 
 class _PhysioSetupTab(ttk.Frame):

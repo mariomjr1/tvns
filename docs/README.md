@@ -4,7 +4,7 @@ This folder contains one SOP per pipeline step. Each SOP is a self-contained
 operator's checklist: **purpose, prerequisites, inputs, the exact command,
 parameters, outputs, QC checks, troubleshooting, and the next step.**
 
-> **New here? Start with [SOP X — The Whole Pipeline, Start to Finish](SOP_X_everything.md)**
+> **New here? Start with [`_start_here.md` — The Whole Pipeline, Start to Finish](_start_here.md)**
 > — a plain-language, intern-friendly walkthrough of the entire GUI from raw DICOMs to
 > final ROIs. Read it first, then use the numbered SOPs below as the detailed reference.
 
@@ -48,6 +48,7 @@ regressors only.
 | [09 — Threshold p<0.05](SOP_09_threshold.md) | `step09_p_value.sh` | per contrast | MATLAB / SPM12 |
 | [10 — ROI extraction](SOP_10_roi.md) | `step10_ROI.sh` | per peak | Python |
 | [10b — Native-space nuclei ROIs](SOP_10_roi.md#6b-brainstem-nuclei-rois-atlas--native-space-step10b) | `step10b_atlas_native_roi_v2.sh` | per subject | ANTs + Python |
+| [11 — Unified QC digest](SOP_11_qc_digest.md) | `utility/qc_digest.py` | per study (final check) | Python |
 
 ## Conventions used in every SOP
 

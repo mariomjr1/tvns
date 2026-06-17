@@ -9,11 +9,11 @@ co-registration path.
 
 ## 📖 How to use it → read `docs/`
 
-**New here? Start with [`docs/SOP_X_everything.md`](docs/SOP_X_everything.md)** — a
+**New here? Start with [`docs/_start_here.md`](docs/_start_here.md)** — a
 plain-language, start-to-finish walkthrough of the whole GUI (every step, what to click,
 what to check), written for someone using it for the first time.
 
-- **[`docs/SOP_X_everything.md`](docs/SOP_X_everything.md)** — the full operator's manual (read this first).
+- **[`docs/_start_here.md`](docs/_start_here.md)** — the full operator's manual (read this first).
 - **[`docs/README.md`](docs/README.md)** — index of the per-step SOPs (00–10) with the exact commands, parameters, and outputs.
 
 ---

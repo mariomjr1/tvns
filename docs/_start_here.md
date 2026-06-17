@@ -1,4 +1,4 @@
-# SOP X — The Whole Pipeline, Start to Finish (read me first)
+# Start Here — The Whole Pipeline, Start to Finish (read me first)
 
 **Who this is for:** a brand-new intern who has never used this pipeline and may have
 little or no fMRI background. It explains, in plain language, **what the GUI does — panel
@@ -505,9 +505,20 @@ These **don't change your data** — they check it and write logs (mostly under
 | **SDC audit** | Distortion correction was **applied** per run (not just available) | `group_sdc_audit.{csv,md}` |
 | **Capture provenance** | Records exact software versions (pipeline commit, fMRIPrep/SPM/MATLAB/RETROICOR/R-DECO, Python) | `codes/qc/provenance/…json` |
 | **Cohort report (piezo)** | Lists every run that went respiration-only + BAD/SUSPECT | `group_piezo_qc.{csv,md}` |
+| **⭐ Unified QC digest** | **Rolls up ALL of the above + fMRIPrep motion (mean FD, % high-motion volumes) into ONE per-subject table, shown live in the GUI** | `codes/qc/qc_digest.{csv,md}` |
 
-**Habit:** after a big step, run the relevant audit and skim `codes/qc/` for `FLAG` /
-`MISMATCH`. Capture **provenance once per batch** before generating final results.
+### The Unified QC digest (the "final check")
+The **QC digest** (QC panel → **↻ Generate / Refresh QC digest**) is the single place to
+answer *"which subjects/steps are good, and which need a look?"* It scans every step's flag
+file plus the fMRIPrep confounds and writes **one row per subject** with a cell per check
+(`motion`, `mni_bold`, `sdc`, `cardinality`, `piezo`, `contrast`, `roi_geom`) and an overall
+**`status`**: **OK** (all green) or **REVIEW** (≥1 flag). It regenerates **in real time**
+each time you click it. Each cell is **OK / FLAG / NA** (source not run yet). **A FLAG means
+*review*, not *exclude*** (flag-and-log policy). Full flag meanings + how to read good vs bad
+subjects: **[SOP 11 — QC digest](SOP_11_qc_digest.md)**.
+
+**Habit:** after a big step, run the relevant audit; before trusting results, **Generate the
+QC digest** and review every `REVIEW` subject. Capture **provenance once per batch** first.
 
 ---
 
