@@ -12,14 +12,19 @@ Convert each subject's raw DICOMs into a BIDS NIfTI dataset using HeuDiConv in
 the heuristic to write BIDS NIfTI + JSON sidecars.
 
 ## GUI (in the app)
-Two panels are involved:
-- **Heuristic Builder** (first time, or when scans don't map): pick a subject, **↻ Scan**
-  to list the detected sequences, assign each a BIDS **Target** (T1w / task-BlockStim /
-  task-ContinuousStim / rest / fmap dir-AP / dir-PA), **⚙ Generate**, **💾 Save** (writes
-  `utility/heuristic/<name>.py`), then set it as the active heuristic.
-- **Step 01 — BIDS** panel: choose All / Specific subject → **Run** (calls
-  `step01_create_bids_v2.sh`; uses out_path / sourcedata / heuristic / env_activate from
-  Setup). The **Sequence viewer** confirms each series mapped to the right BIDS target.
+Step 01 is one panel with four tabs: **Pass 1 — Generate codes | Sequences (heuristic) |
+Pass 2 — Convert to BIDS | BIDS Validator**.
+1. **Pass 1 — Generate codes:** pick All/Specific subject → **Run** (heudiconv `-c none`)
+   to detect the sequences (writes `dicominfo*.tsv`).
+2. **Sequences (heuristic):** the **embedded Heuristic Builder**. **↻ Scan** → pick the
+   subject → it loads the detected sequences and **auto-assigns each to its BIDS target
+   from the default rules** (T1w / BlockStim / ContinuousStim / rest / fmap-AP / fmap-PA).
+   Review them — **change** a row's Target, **Exclude selected**, or **↺ Auto-fill (default
+   rules)** to reset — then **⚙ Generate → 💾 Save** (writes `utility/heuristic/<name>.py`
+   + a `.log` of added/excluded) → **Use in Pass 2** (sets the active heuristic).
+3. **Pass 2 — Convert to BIDS:** pick the heuristic + subjects → **Run**
+   (`step01_create_bids_v2.sh`).
+4. **BIDS Validator:** checks the result.
 Done when `sourcedata/sub-XXXX/ses-01/{anat,func,fmap}/` is populated.
 
 ## 2. Prerequisites

@@ -228,9 +228,11 @@ the matching numbered SOP (linked).
 - **What:** converts DICOM → tidy BIDS, naming every scan (T1w, rest, BlockStim,
   ContinuousStim, and the **AP/PA fieldmaps** for distortion correction). A **heuristic**
   (rules file) decides which scan is which.
-- **GUI:** *Heuristic Builder* (first time / when scans don't match) → **↻ Scan**, assign
-  each series a **Target**, **⚙ Generate**, **💾 Save**, set active. Then *Step 01* panel →
-  All/Specific → **Run**. The *Sequence viewer* confirms mappings.
+- **GUI (tabs):** **Pass 1 — Generate codes** (detect sequences) → **Sequences (heuristic)**
+  — the *embedded Heuristic Builder*: **↻ Scan**, pick subject; it **auto-assigns each
+  sequence to its BIDS target from the default rules** (T1w/tasks/fmaps). Change/exclude any
+  row (or **↺ Auto-fill** to reset), then **⚙ Generate → 💾 Save → Use in Pass 2** → **Pass 2
+  — Convert to BIDS** (**Run**) → **BIDS Validator**.
 - **In:** `rawdata/`. **Out:** `sourcedata/sub-XXXX/ses-01/{anat,func,fmap}/` + `.json`.
 - **Time:** minutes per subject.
 - **Verify:** each task run has `*_bold.nii.gz` + `*_bold.json`; fieldmaps in `fmap/`. Run

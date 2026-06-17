@@ -971,7 +971,11 @@ class _PassPanel(ttk.Frame):
 # ── Step 01 Panel ──────────────────────────────────────────────────────────────
 
 class BidsPanel(ttk.Frame):
-    """Inner notebook: Pass 1 | Sequences | Pass 2 | BIDS Validator."""
+    """Inner notebook: Pass 1 | Sequences (heuristic) | Pass 2 | BIDS Validator.
+
+    The 'Sequences (heuristic)' tab is the embedded Heuristic Builder: after Pass 1
+    it loads the detected sequences, auto-assigns each to its BIDS target from the
+    default rules, and lets you include / change / exclude before Pass 2."""
 
     def __init__(self, parent, cfg: dict, console: Console,
                  status_var: tk.StringVar, runner: ScriptRunner,
@@ -990,12 +994,13 @@ class BidsPanel(ttk.Frame):
         self._nb = nb
 
         self._pass1   = _PassPanel(nb, 1, cfg, console, status_var, runner, state=state)
-        self._seqview = SequenceViewerPanel(nb, cfg)
+        # 'Sequences' tab is the embedded Heuristic Builder (auto-fills BIDS targets).
+        self._seqview = HeuristicPanel(nb, cfg, console, status_var)
         self._pass2   = _PassPanel(nb, 2, cfg, console, status_var, runner, state=state)
         self._bidsval = _BIDSValidatorTab(nb, cfg, console, status_var, runner, state=state)
 
         nb.add(self._pass1,   text="  Pass 1 — Generate codes  ")
-        nb.add(self._seqview, text="  Sequences  ")
+        nb.add(self._seqview, text="  Sequences (heuristic)  ")
         nb.add(self._pass2,   text="  Pass 2 — Convert to BIDS  ")
         nb.add(self._bidsval, text="  BIDS Validator  ")
 
@@ -1998,14 +2003,15 @@ class HeuristicPanel(ttk.Frame):
         self._console = console
         self._status  = status_var
 
-        ttk.Label(self, text="Heuristic Builder",
+        ttk.Label(self, text="Sequences → Heuristic",
                   font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             self,
-            text=("Load the sequences detected by Step 01 Pass 1, assign each to a "
-                  "BIDS target, then generate + save a heuristic.py.\n"
-                  "Matching is on series_description and/or dim3. Saved to "
-                  "utility/heuristic/<name>.py (+ <name>.log)."),
+            text=("After Step 01 Pass 1, this loads the detected sequences and "
+                  "AUTO-ASSIGNS each to its BIDS target from the default rules "
+                  "(T1w / BlockStim / ContinuousStim / rest / fmap-AP / fmap-PA).\n"
+                  "Review them: include / change / exclude any row, then ⚙ Generate → "
+                  "💾 Save → Use in Pass 2. Saved to utility/heuristic/<name>.py (+ .log)."),
             foreground="gray", wraplength=620,
         ).pack(anchor="w", pady=(0, 8))
 
@@ -2043,6 +2049,7 @@ class HeuristicPanel(ttk.Frame):
         ttk.Button(ar, text="Assign to selected", command=self._assign).pack(side="left", padx=(0, 4))
         ttk.Button(ar, text="Exclude selected", command=lambda: self._set_target("(exclude)")).pack(side="left", padx=(0, 4))
         ttk.Button(ar, text="Clear", command=lambda: self._set_target("")).pack(side="left")
+        ttk.Button(ar, text="↺ Auto-fill (default rules)", command=self._autofill_all).pack(side="left", padx=(12, 0))
 
         mr = ttk.Frame(self); mr.pack(fill="x", pady=(0, 4))
         self._match_dim3 = tk.BooleanVar(value=True)
@@ -2122,21 +2129,67 @@ class HeuristicPanel(ttk.Frame):
                 f"dicominfo*.tsv not found for {subj}.\nRun Step 01 Pass 1 first.")
             return
         self._tv.delete(*self._tv.get_children())
+        n_auto = 0
         with open(tsv, newline="") as f:
             for row in csv.DictReader(f, delimiter="\t"):
+                desc = row.get("series_description", "")
+                dim3 = row.get("dim3", "")
+                tgt  = self._auto_match(desc, dim3)       # auto-assign from default rules
+                if tgt:
+                    n_auto += 1
                 self._tv.insert("", "end", values=(
-                    "",                                     # target (unassigned)
+                    tgt,                                    # target (auto-assigned, editable)
                     row.get("series_id", ""),
-                    row.get("series_description", ""),
-                    row.get("dim3", ""),
+                    desc, dim3,
                     row.get("dim4", ""),
                     row.get("TR", ""),
                     row.get("protocol_name", ""),
-                ), tags=("excluded",))
+                ), tags=("assigned" if tgt else "excluded",))
         # pre-fill the name from the subject
         self._name_var.set(f"heuristic_{subj}")
-        self._console.append(f"[Heuristic] Loaded {len(self._tv.get_children())} "
-                             f"sequence(s) for {subj}", "info")
+        self._console.append(
+            f"[Heuristic] Loaded {len(self._tv.get_children())} sequence(s) for {subj}; "
+            f"auto-assigned {n_auto} from default rules — review / adjust, then Generate.", "info")
+        # Show the generated heuristic immediately so the user starts from the defaults.
+        if n_auto:
+            self._generate()
+
+    # ── auto-assignment from the default (general) heuristic rules ──────────────
+    @staticmethod
+    def _auto_match(desc, dim3):
+        """Mirror utility/heuristic/template/tvns_default.py so each detected sequence
+        starts with its default BIDS target (editable afterwards). Returns '' if no
+        default rule matches (left excluded)."""
+        d = desc or ""
+        try:
+            n3 = int(float(dim3)) if str(dim3).strip() else None
+        except ValueError:
+            n3 = None
+        if n3 == 176 and "MEMP" in d:
+            return "T1w"
+        if n3 == 114 and "t2" in d:
+            return "T2w"
+        if n3 == 92:
+            if "TOPUP_AP" in d:        return "fmap-AP"
+            if "TOPUP_PA" in d:        return "fmap-PA"
+            if "BlockStim" in d:       return "task-BlockStim"
+            if "ContinuousStim" in d:  return "task-ContinuousStim"
+            if "REST_ep2d_bold" in d:  return "task-rest"
+        return ""
+
+    def _autofill_all(self):
+        """Re-apply the default rules to every row (resets manual edits)."""
+        n_auto = 0
+        for iid in self._tv.get_children():
+            vals = list(self._tv.item(iid, "values"))
+            tgt = self._auto_match(vals[2], vals[3])     # desc, dim3
+            vals[0] = tgt
+            if tgt:
+                n_auto += 1
+            self._tv.item(iid, values=vals, tags=("assigned" if tgt else "excluded",))
+        self._console.append(f"[Heuristic] Auto-filled {n_auto} sequence(s) from default rules.", "ok")
+        if n_auto:
+            self._generate()
 
     # ── assignment ────────────────────────────────────────────────────────────
     def _assign(self):
@@ -6344,7 +6397,7 @@ class App(tk.Tk):
         t_secondlevel = panel(SecondLevelPanel,    cfg, console, status_var, runner)
         t_threshold = panel(ThresholdPanel,    cfg, console, status_var, runner)
         t_roi = panel(RoiPanel,    cfg, console, status_var, runner)
-        t_heur   = panel(HeuristicPanel, cfg, console, status_var)
+        # Heuristic builder is now embedded in Step 01 → "Sequences (heuristic)" tab.
         t_qc     = panel(QCPanel,        cfg, console, status_var, runner)
         t_bsmask = panel(BrainstemMaskPanel, cfg, console, status_var, runner)
 
@@ -6361,8 +6414,7 @@ class App(tk.Tk):
         nav.add("08  Second-level",       t_secondlevel)
         nav.add("09  Threshold p<0.05",   t_threshold)
         nav.add("10  ROI extraction",     t_roi)
-        nav.add("∷  Heuristic",           t_heur,   section="Tools")
-        nav.add("⬡  QC Snapshots",        t_qc)
+        nav.add("⬡  QC Snapshots",        t_qc,     section="Tools")
         nav.add("⊟  Brainstem Mask",      t_bsmask)
 
         # Expose console/status so Save/Load config can report progress
