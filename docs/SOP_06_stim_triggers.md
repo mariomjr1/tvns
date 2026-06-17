@@ -8,9 +8,19 @@
 
 ## 1. Purpose
 Extract stimulus onset/offset times from the STIMTRIG channel of each parsed
-physio segment, and assemble all first-level GLM inputs (stim files + motion
-regressors + RETROICOR regressors + T1w BOLDs) into one shared `first_level/`
-folder for Step 07.
+physio segment, and assemble the first-level inputs (stim onsets + motion
+regressors; plus legacy T1w-BOLD and RETROICOR-regressor folders) into one shared
+`first_level/` folder for Step 07. **The default Step-07 GLM models the fMRIPrep
+MNI BOLD with motion regressors only** (RETROICOR was already applied to the image
+upstream); the T1w-BOLD / RETROICOR-regressor folders feed only the optional legacy
+T1w route.
+
+## GUI (in the app)
+Open the **Step 06 — Stim Triggers** panel. Pick subject(s), set **threshold** /
+**debounce** and the **QC** option → **Run** (`step06_stim_v2.sh`). Produces
+`*_bold_stim.txt` (onsets) and `*_motion_regressors.txt` (6 rigid params + one FD spike per
+high-motion volume — the minimal model), assembled into the shared `first_level/` folder.
+Review the QC plots: detected onsets must land on the STIMTRIG edges.
 
 ## 2. Prerequisites
 - Step 03 complete: `derivatives/physio/<subj>/parsed/task-*_run-*.mat`.

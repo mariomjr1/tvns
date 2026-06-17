@@ -18,6 +18,17 @@ alternative that runs **one-sample** group t-tests per task.
 
 ---
 
+## GUI (in the app)
+Open the **Step 08 — Second-level** panel.
+1. **Part 1 — Populate:** set the Step 07 first-level root + task root + contrast name
+   (`wcon_0001.nii`) → **▶ Run Part 1** (`step08a_populate_v2.sh`; verifies each subject's
+   contrast by name and flags mismatches to `_contrast_check.csv` — review it).
+2. **Part 2 — Group analysis:** set the **Cases** and **Controls** lists, optional
+   **covariates** (`age,sex,mean_fd`), the combined mode, and the group output dir → **▶ Run
+   Part 2** (`step08b_groups_v2.sh`). Produces per-task + combined cases-vs-controls maps.
+
+---
+
 ## Part 1 — `step08a_populate_v2.sh` (populate task folders)
 
 ### Inputs

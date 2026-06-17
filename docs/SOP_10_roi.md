@@ -13,6 +13,18 @@ At a chosen coordinate (e.g. a peak from the Step 09 significance map):
 3. write 5 mm and 10 mm spherical masks (NIfTI)
 4. optionally mask a chosen `con`/group contrast with the large sphere
 
+## GUI (in the app)
+Open the **Step 10 — ROI** panel.
+- **Coordinate (sphere):** enter **X/Y/Z** + **mode** (mm/voxel), the **wcon dir** (a Step
+  08a task folder), **output dir**, and the sphere radii.
+- **Mask / atlas ROIs** (coordinate-free): set a **ROI mask** and/or the **Labeled atlas**
+  (bound to Setup's `brainstem_atlas`) + **label values/names** → one mean column per
+  nucleus. Leave X/Y/Z empty to run these alone.
+- **▶ Run Step 10 — Extract** (`step10_ROI.sh`) → `roi_values.csv`.
+- **Native-space nuclei ROIs (step10b):** set the **native con root** + glob + output →
+  **▶ Atlas→native ROIs** (`step10b_atlas_native_roi_v2.sh`; warps the atlas into native
+  space via the step05c refinement — needs Step 07 run with Space=T1w). See §6b.
+
 ## 2. Prerequisites
 - A peak coordinate (MNI mm, or voxel indices).
 - A folder of per-subject MNI contrast images (`<subject>.nii`) — typically a

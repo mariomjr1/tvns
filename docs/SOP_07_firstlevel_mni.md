@@ -7,13 +7,22 @@
 ---
 
 ## 1. Purpose
-Run a first-level GLM with the Stim condition plus motion (and RETROICOR) nuisance
-regressors and build Stim contrasts. **By default** the GLM models the **direct
+Run a first-level GLM with the Stim condition plus **motion** nuisance regressors and
+build Stim contrasts (RETROICOR was already applied to the image upstream — the GLM does
+**not** re-add physio regressors). **By default** the GLM models the **direct
 fMRIPrep MNI152NLin2009cAsym BOLD** (`space=MNI`): contrasts are already in MNI
 (`con_*` copied to `wcon_*`) with **no SPM renormalisation**. The legacy **native
 T1w + SPM unified-segmentation warp** path (`space=T1w`, `do_mni=1`) remains
 available as an optional sensitivity/comparison route. Masks and BOLDs are
 **located in place** in `derivatives/fmriprep/` — there is no copy step.
+
+## GUI (in the app)
+Open the **Step 07 — First-level** panel. Set **Space**: **MNI (default)** models the
+fMRIPrep MNI BOLD directly; **T1w** (native — required for the step10b native ROIs) or
+**both**. Leave **do_mni** for the legacy SPM warp with the T1w route only. Adjust
+smoothing/TR if changing defaults, pick subjects → **Run** (`step07_firstlevel_mni_v2.sh`).
+The separate **07b** panel warps a single existing con folder to MNI. Output:
+`con_0001.nii` / `wcon_0001.nii` ("Stim > baseline") per subject × task.
 
 ## 2. Prerequisites
 - Step 02 (fMRIPrep T1w BOLD + brain mask) and Step 06 (`first_level/` inputs).
@@ -92,8 +101,8 @@ For warping the **whole** step07 `<subj>/<task>` tree, prefer
 `step07_firstlevel_mni_v2.sh` with `warp_only=1` instead.
 
 ## 7. QC / verification
-- Open `SPM.mat` design in SPM — Stim regressor + motion/RETROICOR nuisance look
-  correct; estimation converged.
+- Open `SPM.mat` design in SPM — Stim regressor + motion nuisance look correct;
+  estimation converged.
 - View `con_0001.nii` (native) and `wcon_0001.nii` (MNI) — sensible activation,
   correct alignment to the MNI template.
 

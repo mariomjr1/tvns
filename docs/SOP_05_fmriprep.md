@@ -16,6 +16,18 @@ A four-part step:
 4. **Part 3** — QC: mean framewise displacement per subject + MNI-BOLD existence
    check, written to `qc_fd_summary.json`.
 
+## GUI (in the app)
+Open the **Step 05 — fMRIPrep** panel (tabs: **Generate BIDS List | fMRIPrep | Pre/Post QC**).
+1. **Generate BIDS List:** build `SubjectListBIDS.txt` (every later step consumes it).
+2. **fMRIPrep:** confirm the paths (raw + corrected BIDS, derivatives, FreeSurfer dir, work
+   dir, Singularity image, FS license), set options (output spaces, memory, slice-timing,
+   skip-bids, CIFTI, "Assemble corrected BIDS first"), pick subjects → **▶ Run fMRIPrep**.
+   Below the run button: **FreeSurfer segmentation extras (step05b)** — **▶ Brainstem
+   segmentation**, **▶ Pituitary/pineal (PGlandsSeg)**, and (after setting an MNI template)
+   **▶ Brainstem co-reg refine (step05c)** — see §8b.
+3. **Pre/Post QC:** optional before/after GIF.
+Then open each subject's fMRIPrep HTML report and run the **SDC audit** (QC panel).
+
 ## 2. Prerequisites
 - Step 01 complete (BIDS `sourcedata`).
 - fMRIPrep Singularity image present (`fmriprep-25.2.3.simg`).

@@ -8,8 +8,24 @@
 
 ## 1. Purpose
 Build slice-timed RETROICOR respiratory (and, where R-DECO peaks exist, cardiac)
-nuisance regressors and run RETROICOR. The regressors are used as GLM covariates
-in Step 07 — see the design note in the [README](README.md).
+regressors and run RETROICOR to **clean the BOLD images in native space**. fMRIPrep
+(Step 05) then runs on this corrected BOLD; the first-level GLM (Step 07) is
+**motion-only** and does **not** re-add the RETROICOR regressors (no double-removal).
+See the design note in the [README](README.md).
+
+## GUI (in the app)
+Open the **Step 04 — RETROICOR** panel (three tabs).
+- **Configuration:** subject + parameters (session, SMS flag, output rate, TR fallback).
+- **Piezo QC Review** (do this *before* running): **▶ Run/Refresh Cardiac QC** → **⟳ Load
+  review** → for each scan, view the piezo trace + R-peaks (thumbnail) and pick **Use
+  cardiac** or **Respiration only** (pre-set from the GOOD/SUSPECT/BAD verdict) → **💾 Save
+  decisions** (writes `<subj>_cardiac_decision.csv`). **📊 Cohort report** rolls up all
+  respiration-only runs into `codes/qc/group_piezo_qc.{csv,md}`.
+- **Run Pipeline:** **Part 1 — Generate 1D**, **Part 2 — Assemble BOLD**, **Part 3 —
+  RETROICOR**, or **▶▶ Run All** (all call `step04_retroicor_v2.sh` with a part selector;
+  your saved per-run decisions are applied automatically).
+Done when `output/*_retro-corrected.nii.gz` appears — this corrected BOLD is what fMRIPrep
+(Step 05) ingests.
 
 ## 2. Prerequisites
 - Step 04 complete: `derivatives/physio/<subj>/preprocessed/*_filtered.mat`
@@ -101,9 +117,11 @@ A run routed to respiration-only logs `[PIEZO-SKIP]` and simply omits its
   the skipped list before trusting the corrected output. (Part 1 only aborts on a
   genuine MATLAB crash.)
 
-> The `*_retro-regressors.mat` are the GLM covariates; the corrected NIfTIs are
-> for visualisation. Step 07 models the **fMRIPrep T1w BOLD** with these
-> regressors (it does **not** use the RETROICOR-corrected image as input).
+> **The corrected NIfTIs are the pipeline input** — fMRIPrep (Step 05) runs on them, so
+> physiological noise is removed from the image in native space. The
+> `*_retro-regressors.mat` / `*_retro-pctvar.mat` are diagnostics (% variance removed).
+> The first-level GLM (Step 07) is **motion-only** and does **not** re-add the RETROICOR
+> regressors (avoids double-removal).
 
 ## 9. Troubleshooting
 | Symptom | Cause / fix |

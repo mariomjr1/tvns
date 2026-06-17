@@ -11,6 +11,14 @@ Locate each subject's DICOM archive with `findsession` and `rsync`-copy it to th
 project `rawdata/` tree. One `screen` session is spawned per subject so downloads
 run in parallel and survive disconnects.
 
+## GUI (in the app)
+Open the **Step 00 — Download DICOMs** panel (left nav).
+1. Paths come from **Setup**: confirm **Raw data path** and **SubjectList.txt**.
+2. **Subject selection:** "All subjects from SubjectList.txt" or "Specific subject".
+3. **▶ Run Step 00** — runs `step00_unpack_V2.sh` in the foreground; progress streams to
+   the console. **⏹ Stop** cancels.
+4. Done when each subject shows `step0_DONE.txt`; already-downloaded subjects are skipped.
+
 ## 2. Prerequisites
 - Logged into the workstation that has `findsession` on PATH and archive access.
 - `utility/SubjectList.txt` populated with **raw scanner IDs**, one per line

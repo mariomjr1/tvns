@@ -10,6 +10,13 @@
 Threshold a second-level group contrast (default **Cases > Controls**) at
 p < 0.05 and write a binary significance map plus a thresholded t-map.
 
+## GUI (in the app)
+Open the **Step 09 — Threshold** panel. Set the **analysis dir** (a Step 08b group folder),
+**output dir**, **p**, **extent**, **contrast index** (1 = Cases>Controls), **tail**
+(default `pos` = cases>controls, the study's one-tailed design), and optional **correction**
+(none / FWE / FDR) → **Run** (`step09_p_value.sh`). Outputs a binary significance mask +
+thresholded t-map (filenames tagged by the correction used).
+
 ## 2. Prerequisites
 - A Step 08b group folder containing `SPM.mat` + `spmT_000*.nii`
   (e.g. `…/groups/BlockStim` or `…/groups/Combined_Block_Continuous`).

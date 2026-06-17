@@ -11,6 +11,16 @@ Anchor the continuous LabChart `.mat` recording to the first MR trigger
 ("pseudotime"), then cut it into one `.mat` per BOLD run, and compute physio QC
 metrics. This is the entry point of the physiological branch (03 → 04 → 05).
 
+## GUI (in the app)
+Open the **Step 02 — Physioparse** panel (per subject).
+1. Pick the BIDS subject and select the session **LabChart `.mat`** (Classic or Block1 —
+   the GUI handles both formats).
+2. Run the sub-steps in order: **pseudotime mapping → quality viz → parse segments →
+   signal QC** (each is a button; outputs go to `derivatives/physio/<subj>/`).
+3. **Most important check:** open `pseudotime_plot.png` — every BOLD sequence must line up
+   with the correct recording segment. The console reports expected-vs-parsed segment
+   counts and flags mismatches (it does not stop).
+
 ## 2. Prerequisites
 - Step 01 complete: BIDS `func/*_bold.json` sidecars exist (provide
   `AcquisitionTime`) and `.heudiconv/.../dicominfo_ses-01.tsv` exists (provides

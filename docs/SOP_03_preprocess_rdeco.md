@@ -12,6 +12,15 @@ for R-peak detection, then **detect R-peaks with R-DECO**. The script does the
 filtering and **stops before R-DECO** — R-peak detection is a separate manual or
 automated action that you perform afterward.
 
+## GUI (in the app)
+Open the **Step 03 — Preprocess + R-DECO** panel.
+1. **Filter** tab: pick the subject → **Run filtering** (writes `*_filtered.mat` +
+   `*_rpiezo.mat`). A flat/garbage RESP errors *for that run only*; a flat RPIEZO warns
+   (route it respiration-only in Step 04); both are flagged and the remaining runs continue.
+2. **R-DECO** tab: **Run automated** R-peak detection (or open the R-DECO GUI to correct
+   beats by hand) → saves `*_rdeco.mat` per run.
+Confirm one `*_rdeco.mat` per run (Step 04 can still run respiration-only without it).
+
 ## 2. Prerequisites
 - Step 03 complete: `derivatives/physio/<subj>/parsed/task-*_run-*.mat` exist.
 - MATLAB on PATH with `utility/matlab_code/preproc_filter_per_sequence.m`.

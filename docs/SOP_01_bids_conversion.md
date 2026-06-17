@@ -11,6 +11,17 @@ Convert each subject's raw DICOMs into a BIDS NIfTI dataset using HeuDiConv in
 **two passes**: Pass 1 generates the conversion codes (dry run), Pass 2 applies
 the heuristic to write BIDS NIfTI + JSON sidecars.
 
+## GUI (in the app)
+Two panels are involved:
+- **Heuristic Builder** (first time, or when scans don't map): pick a subject, **↻ Scan**
+  to list the detected sequences, assign each a BIDS **Target** (T1w / task-BlockStim /
+  task-ContinuousStim / rest / fmap dir-AP / dir-PA), **⚙ Generate**, **💾 Save** (writes
+  `utility/heuristic/<name>.py`), then set it as the active heuristic.
+- **Step 01 — BIDS** panel: choose All / Specific subject → **Run** (calls
+  `step01_create_bids_v2.sh`; uses out_path / sourcedata / heuristic / env_activate from
+  Setup). The **Sequence viewer** confirms each series mapped to the right BIDS target.
+Done when `sourcedata/sub-XXXX/ses-01/{anat,func,fmap}/` is populated.
+
 ## 2. Prerequisites
 - Step 00 complete: `rawdata/<subj>/DICOM/raw[/_NN]` exists.
 - `utility/SubjectList.txt` (raw scanner IDs).
