@@ -33,7 +33,7 @@ Done when `sourcedata/sub-XXXX/ses-01/{anat,func,fmap}/` is populated.
 - A heuristic file. Default: `utility/heuristic.py`. Build a project-specific one
   with the **Heuristic builder** in the GUI (assigns Step-01 Pass-1 sequences to
   BIDS targets and writes `utility/heuristic/<name>.py`).
-- The heudiconv virtualenv (script sources it from the lab `env/heudiconv`).
+- The heudiconv virtualenv (the script sources the activate path set in Setup — "Env activate script").
 
 ## 3. Inputs
 | Input | Default |

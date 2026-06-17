@@ -2,7 +2,7 @@
 
 **Script:** `step05_fmriprep_v2.sh`
 **Scope:** per study
-**Runs on:** the cluster (needs Singularity/Apptainer and `/autofs` mounts)
+**Runs on:** the cluster (needs Singularity/Apptainer and the project filesystem mounted)
 
 ---
 
