@@ -44,6 +44,10 @@ _DEFAULTS = {
     "python_exe":   sys.executable,
     "retro_code":   str(SCRIPTS_ROOT / "utility" / "retroicor"),
     "rdeco_code":   str(SCRIPTS_ROOT / "utility" / "r-deco-master"),
+    # FreeSurfer 8.1+ home (sourced by the segmentation steps 05b/05c — needed for
+    # PGlandsSeg which requires >= 8.1, and for brainstem substructures). Set in
+    # Setup; the .sh scripts source <freesurfer_home>/SetUpFreeSurfer.sh.
+    "freesurfer_home": "/usr/local/freesurfer/8.1.0",
     # Brainstem mask (Task 05) — binary mask built by the Brainstem Mask tool;
     # shared so steps 07/08/09/10 can restrict the analysis to the brainstem.
     "brainstem_mask": "",
@@ -433,6 +437,7 @@ class SetupPanel(ttk.Frame):
             ("Python exe:",           "python_exe",  "file", None),
             ("RETROICOR code dir:",   "retro_code",  "dir",  None),
             ("R-DECO code dir:",      "rdeco_code",  "dir",  None),
+            ("FreeSurfer 8.1+ home:", "freesurfer_home", "dir", None),
         ]
         for label, key, mode, filetypes in tool_rows:
             PathRow(tools_frame, label, mode=mode, filetypes=filetypes,
@@ -1371,6 +1376,7 @@ class _FmriprepTab(ttk.Frame):
                  runner: ScriptRunner, fp_env_var: tk.StringVar,
                  fp_subj_var: tk.StringVar,
                  python_exe_var: "tk.StringVar | None" = None,
+                 fs_home_var: "tk.StringVar | None" = None,
                  state: "PipelineState | None" = None, **kwargs):
         super().__init__(parent, padding=14, **kwargs)
         self._console        = console
@@ -1379,6 +1385,7 @@ class _FmriprepTab(ttk.Frame):
         self._fp_env_var     = fp_env_var
         self._fp_subj        = fp_subj_var
         self._python_exe_var  = python_exe_var
+        self._fs_home_var     = fs_home_var   # FreeSurfer >= 8.1 home (Setup)
         self._state           = state
         self._last_subjects: list = []
         self._tmp_subj_file: "str | None" = None
@@ -1466,6 +1473,25 @@ class _FmriprepTab(ttk.Frame):
         self._stop_btn.pack(side="left", padx=4)
         self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=200)
         self._progress.pack(side="left", padx=12)
+
+        # ── Post-recon-all segmentation extras (step05b) — after fMRIPrep ─────────
+        seg_frame = ttk.LabelFrame(
+            self, text="FreeSurfer segmentation extras (step05b — after recon-all)",
+            padding=(10, 6))
+        seg_frame.pack(fill="x", pady=(8, 0))
+        ttk.Label(seg_frame, foreground="gray", wraplength=560,
+                  text=("Runs on the FreeSurfer dir after fMRIPrep's recon-all. Brainstem "
+                        "substructures produce the subject-space mask used by step05c "
+                        "co-registration refinement; PGlandsSeg needs FreeSurfer ≥ 8.1 "
+                        "(set in Setup). Flag + log + continue — never skips silently.")
+                  ).pack(anchor="w", pady=(0, 4))
+        seg_row = ttk.Frame(seg_frame); seg_row.pack(fill="x")
+        self._bs_btn = ttk.Button(seg_row, text="▶ Brainstem segmentation",
+                                  command=lambda: self._run_seg("brainstem"))
+        self._bs_btn.pack(side="left", padx=(0, 6))
+        self._pit_btn = ttk.Button(seg_row, text="▶ Pituitary/pineal (PGlandsSeg)",
+                                   command=lambda: self._run_seg("pituitary"))
+        self._pit_btn.pack(side="left")
 
     def _subjects(self):
         if self._sel_mode.get() == "specific":
@@ -1566,6 +1592,59 @@ class _FmriprepTab(ttk.Frame):
             self._console.append(f"[Step 05] fMRIPrep failed (exit {rc}).", "error")
             if self._state:
                 self._state.update_many(self._last_subjects, "step_05", "failed")
+
+    def _run_seg(self, what):
+        """step05b: FreeSurfer brainstem / pituitary segmentation (flag+log+continue)."""
+        script = SCRIPTS_ROOT / "step05b_freesurfer_segment_v2.sh"
+        if not script.is_file():
+            messagebox.showerror("Error", f"Script not found:\n{script}"); return
+        subjects = self._subjects()
+        if not subjects:
+            messagebox.showerror("Error", "No subjects. Generate the BIDS list first."); return
+        fs_home = (self._fs_home_var.get().strip() if self._fs_home_var else "")
+        if not fs_home:
+            messagebox.showerror("Error", "Set 'FreeSurfer 8.1+ home' in Setup first."); return
+        fs_dir = self._vars["fs_dir"].get().strip()
+        if not fs_dir:
+            messagebox.showerror("Error", "Set the FreeSurfer dir first."); return
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix="_step05b_subj.txt", prefix="seg_", delete=False)
+        tmp.write("\n".join(subjects) + "\n"); tmp.close()
+        self._tmp_subj_file = tmp.name
+        cmd = ["bash", str(script), tmp.name, fs_home, fs_dir, what]
+
+        label = {"brainstem": "Brainstem segmentation",
+                 "pituitary": "Pituitary/pineal segmentation"}.get(what, "FS segmentation")
+        self._console.separator()
+        self._console.append(f"[step05b] {label} — {len(subjects)} subject(s)…", "info")
+        self._console.separator()
+        for b in (self._run_btn, self._bs_btn, self._pit_btn):
+            b.config(state="disabled")
+        self._stop_btn.config(state="normal")
+        self._progress.start(10)
+        self._status.set(f"{label} running…")
+        self._runner.run(cmd=cmd, cwd=fs_dir if os.path.isdir(fs_dir) else "/tmp",
+                         on_line=self._console.append,
+                         on_done=lambda rc, lbl=label: self._seg_done(rc, lbl))
+
+    def _seg_done(self, rc, label):
+        self._progress.stop()
+        for b in (self._run_btn, self._bs_btn, self._pit_btn):
+            b.config(state="normal")
+        self._stop_btn.config(state="disabled")
+        if getattr(self, "_tmp_subj_file", None):
+            try:
+                os.unlink(self._tmp_subj_file)
+            except OSError:
+                pass
+            self._tmp_subj_file = None
+        if rc == 0:
+            self._status.set(f"{label} complete ✓")
+            self._console.append(f"[step05b] {label} finished (review FLAG lines).", "ok")
+        else:
+            self._status.set(f"{label} failed (exit {rc})")
+            self._console.append(f"[step05b] {label} failed (exit {rc}).", "error")
 
     def _stop(self):
         """Stop the currently running process."""
@@ -1761,7 +1840,8 @@ class FmriprepPanel(ttk.Frame):
 
         bids_list_tab = _BIDSListTab(nb, cfg, console, status_var, fp_subj_var)
         fp_tab        = _FmriprepTab(nb, console, status_var, runner, fp_env_var, fp_subj_var,
-                                     python_exe_var=cfg["python_exe"], state=state)
+                                     python_exe_var=cfg["python_exe"],
+                                     fs_home_var=cfg["freesurfer_home"], state=state)
         qc_tab        = _Step13QCTab(nb, cfg, console, status_var, runner)
 
         nb.add(bids_list_tab, text="  Generate BIDS List  ")

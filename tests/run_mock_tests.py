@@ -117,6 +117,26 @@ def shell_tests():
     rec("shell", "step00 foreground processes subject",
         "PASS" if (T / "out/subA/DICOM/LOG/step0_DONE.txt").exists() else "FAIL")
 
+    # step05b FreeSurfer segmentation (stub FS tools; PGlandsSeg intentionally absent)
+    (binp / "segment_subregions").write_text('#!/bin/bash\necho "STUB_SEGSUB $*" >&2\nexit 0\n')
+    (binp / "segment_subregions").chmod(0o755)
+    fsh = T / "fs"; fsh.mkdir(); (fsh / "SetUpFreeSurfer.sh").write_text("")
+    sdir = T / "subjects"; (sdir / "sub-T" / "mri").mkdir(parents=True)
+    sl2 = T / "subj2.txt"; sl2.write_text("sub-T\n")
+    s5b = str(REPO / "step05b_freesurfer_segment_v2.sh")
+
+    r = run([s5b, str(sl2), str(fsh), str(sdir), "brainstem"])
+    rec("shell", "step05b brainstem seg (stub segment_subregions)",
+        "PASS" if r.returncode == 0 and "brainstemSsLabels written" in r.stdout else "FAIL")
+
+    r = run([s5b, str(sl2), str(fsh), str(sdir), "pituitary"])
+    rec("shell", "step05b pituitary skips when no FS8.1 (flag, exit 0)",
+        "PASS" if r.returncode == 0 and "pituitary skipped" in r.stdout else "FAIL")
+
+    r = run([s5b, str(sl2)])
+    rec("shell", "step05b requires freesurfer_home + subjects_dir",
+        "PASS" if r.returncode == 1 else "FAIL")
+
 
 # ── 3. Python logic (synthetic fixtures) ──────────────────────────────────────
 def logic_tests():
