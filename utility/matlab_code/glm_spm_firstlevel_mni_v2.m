@@ -84,7 +84,10 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     % BrainstemSmoothFWHM (optional) overrides SmoothFWHM in brainstem mode.
     addParameter(p, 'BrainstemMask',       '',    @(x) ischar(x)||isstring(x));
     addParameter(p, 'RestrictBrainstem',   false, @(x) islogical(x)||isnumeric(x));
-    addParameter(p, 'BrainstemSmoothFWHM', [],    @(x) isnumeric(x));
+    % Brainstem smoothing FWHM (mm) used in restrict-to-brainstem mode. Default 0 = NO
+    % smoothing (ROI averaging gives the SNR; smoothing only mixes mm-scale nuclei).
+    % Cortex/whole-brain keeps SmoothFWHM (3 mm).
+    addParameter(p, 'BrainstemSmoothFWHM', [0 0 0], @(x) isnumeric(x));
     % HPF cutoff (s) and serial-correlation model. Default cvi = FAST (better than AR(1)
     % for short-TR 7T data; Corbin 2018, Olszowy 2019). Hpf must be >= 2x the longest
     % period of interest — checked at runtime against the onsets (Task 15/17).
@@ -308,6 +311,10 @@ function run_one_glm(space_entity, out_dir, do_warp, subj, ses, task, run, func_
     [~, bn, be] = fileparts(bold_nii);
     smoothed = fullfile(workdir, [smooth_prefix bn be]);
     if startsWith(basename(bold_nii), smooth_prefix)
+        scans_sm = cellstr(spm_select('expand', bold_nii));
+    elseif all(smooth_fwhm == 0)
+        % FWHM 0 (brainstem ROI default) → model the UNSMOOTHED BOLD (no smooth step)
+        fprintf('  No smoothing (FWHM=0) — modeling the unsmoothed BOLD\n');
         scans_sm = cellstr(spm_select('expand', bold_nii));
     else
         scans_bold = cellstr(spm_select('expand', bold_nii));

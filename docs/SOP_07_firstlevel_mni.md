@@ -44,9 +44,11 @@ this by using the two route folders; from the CLI, give each space its own `outp
 - **High-pass filter:** exposed (`Hpf`, default 128 s) and **checked at runtime against the
   onsets** — the GLM **warns if HPF < 2× the longest task interval** (else the task regressor
   is attenuated). Set it from the real paradigm timing per task.
-- **Smoothing:** cortex/whole-brain 3 mm FWHM; **brainstem ≤ 1.5 mm or none** (use the
-  optional brainstem smoothing). For ROI extraction prefer **0 mm** — ROI averaging supplies
-  the SNR; smoothing only adds partial-volume mixing across mm-scale nuclei.
+- **Smoothing (per route — now the defaults):** cortex/whole-brain **3 mm** FWHM
+  (`SmoothFWHM`); **brainstem = 0 mm (no smoothing)** — `BrainstemSmoothFWHM` defaults to 0
+  and applies in restrict-to-brainstem mode (FWHM 0 models the unsmoothed BOLD). ROI
+  averaging supplies the SNR; smoothing only mixes mm-scale nuclei. Use ~1.5 mm only if you
+  want a brainstem *voxelwise* map.
 - **PSC (percent signal change):** the GLM also writes **`pscon_0001.nii`** (and `wpscon_*`
   in MNI) = the contrast scaled to %ΔBOLD (`100·con·peak / session-mean β`). **Use PSC as the
   primary ROI currency** — interpretable and robust to the E12↔XA60 console scaling change;

@@ -4770,7 +4770,7 @@ class FirstLevelPanel(ttk.Frame):
         self._space_var    = tk.StringVar(value="both")  # both (default) | MNI | T1w — routes to separate folders
         self._restrict_bs  = tk.BooleanVar(value=False)   # restrict GLM to brainstem (Task 05 C2)
         self._bs_mask_var  = cfg["brainstem_mask"]        # shared brainstem mask path
-        self._bs_smooth_var = tk.StringVar(value="")      # optional brainstem smoothing (mm)
+        self._bs_smooth_var = tk.StringVar(value="0")     # brainstem smoothing (mm); 0 = none (default)
         self._cvi_var       = tk.StringVar(value="FAST")  # serial model: FAST (default) | AR(1)
         self._hpf_var       = tk.StringVar(value="128")   # high-pass cutoff (s)
         # Single-folder warp (warp ANY con folder + a T1 → MNI)
@@ -4874,7 +4874,7 @@ class FirstLevelPanel(ttk.Frame):
                 filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
                 var=self._bs_mask_var, label_width=18).pack(fill="x", pady=2)
         bsr = ttk.Frame(pm); bsr.pack(fill="x")
-        ttk.Label(bsr, text="Brainstem smoothing FWHM (mm, blank = use above):").pack(side="left")
+        ttk.Label(bsr, text="Brainstem smoothing FWHM (mm; 0 = none, the brainstem default):").pack(side="left")
         ttk.Entry(bsr, textvariable=self._bs_smooth_var, width=6).pack(side="left", padx=(4, 0))
         ttk.Label(pm, foreground="gray", wraplength=560,
                   text=("Build the mask in the Brainstem Mask tool. It must match the modeling "
