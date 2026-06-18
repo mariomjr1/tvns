@@ -140,6 +140,25 @@ atlas (`brainstem_navigator_atlas.nii.gz`) + a `…_labels.csv` (value,name).
   + extraction use it. The **QC snapshots** `atlas_native` montage helps eyeball this. A wrong
   chain still looks plausible, so judge by nucleus anatomy, not "is it in the brainstem."
 
+## 6c. ROI group stats — cases vs controls per nucleus (primary inference)
+`utility/roi_group_stats.py` runs the per-nucleus two-sample test on a ROI CSV
+(`roi_values.csv` or `group_brainstem_nuclei_native.csv`) given cases/controls lists.
+**Defaults: one-tailed cases > controls, uncorrected** (the study's directional design).
+Two checkboxes in the step 10 panel ("ROI group stats" sub-frame) make the rest optional:
+- **Two-tailed** (off by default) → `--two-tailed` (uses `2·P(|T|≥|t|)`).
+- **FDR across nuclei** (off by default; **recommended as the PRIMARY report**) → `--fdr`
+  (Benjamini-Hochberg across nuclei × CSVs, `--fdr-q` default 0.05).
+
+Output `group_roi_stats.csv`: per nucleus `mean_cases, mean_controls, mean_diff, t, df, p`
+(+ `p_fdr` when FDR is on) + a significance flag. CLI:
+```bash
+python utility/roi_group_stats.py --roi-csv roi_values.csv \
+    --cases cases.txt --controls controls.txt --fdr   # add --two-tailed if needed
+```
+> Stats are pure-stdlib (Welch t + BH). The **voxelwise** step 09 has its own `tail`
+> (pos/neg/two) and `correction` (none/FWE/FDR); for a two-tailed FWE run, step 09 now
+> thresholds at α/2 per tail (fixed).
+
 ## 7. Troubleshooting
 | Symptom | Cause / fix |
 |---------|-------------|

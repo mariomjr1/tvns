@@ -5638,6 +5638,41 @@ class RoiPanel(ttk.Frame):
                                       command=self._run_native_roi)
         self._natroi_btn.pack(anchor="w", pady=(2, 0))
 
+        # ── ROI group stats: cases vs controls per nucleus (primary inference) ────
+        self._rs_csv_var   = tk.StringVar()
+        self._rs_cases_var = tk.StringVar()
+        self._rs_ctrl_var  = tk.StringVar()
+        self._rs_out_var   = tk.StringVar()
+        self._rs_two_var   = tk.BooleanVar(value=False)   # default one-tailed cases>controls
+        self._rs_fdr_var   = tk.BooleanVar(value=False)   # default uncorrected
+        gs = ttk.LabelFrame(self, text="ROI group stats — cases vs controls, per nucleus (primary)",
+                            padding=(10, 6))
+        gs.pack(fill="x", pady=(0, 8))
+        ttk.Label(gs, foreground="gray", wraplength=560,
+                  text=("Per-nucleus two-sample test on a ROI CSV (roi_values.csv / "
+                        "group_brainstem_nuclei_native.csv). **Default = one-tailed cases>controls, "
+                        "uncorrected** — tick the boxes for two-tailed and/or FDR across nuclei "
+                        "(FDR is the recommended PRIMARY report).")).pack(anchor="w", pady=(0, 4))
+        PathRow(gs, "ROI values CSV:", mode="file",
+                filetypes=[("CSV", "*.csv"), ("All", "*.*")],
+                var=self._rs_csv_var, label_width=18).pack(fill="x", pady=2)
+        PathRow(gs, "Cases list (.txt):", mode="file",
+                filetypes=[("Text", "*.txt"), ("All", "*.*")],
+                var=self._rs_cases_var, label_width=18).pack(fill="x", pady=2)
+        PathRow(gs, "Controls list (.txt):", mode="file",
+                filetypes=[("Text", "*.txt"), ("All", "*.*")],
+                var=self._rs_ctrl_var, label_width=18).pack(fill="x", pady=2)
+        gsr = ttk.Frame(gs); gsr.pack(fill="x", pady=2)
+        ttk.Checkbutton(gsr, text="Two-tailed (default: one-tailed cases>controls)",
+                        variable=self._rs_two_var).pack(side="left", padx=(0, 14))
+        ttk.Checkbutton(gsr, text="FDR across nuclei (recommended)",
+                        variable=self._rs_fdr_var).pack(side="left")
+        PathRow(gs, "Output CSV:", mode="file",
+                filetypes=[("CSV", "*.csv"), ("All", "*.*")],
+                var=self._rs_out_var, label_width=18).pack(fill="x", pady=2)
+        self._rs_btn = ttk.Button(gs, text="▶ Run ROI group stats", command=self._run_roi_stats)
+        self._rs_btn.pack(anchor="w", pady=(2, 0))
+
         rf = ttk.LabelFrame(self, text="Sphere radii (mm)", padding=(10, 6))
         rf.pack(fill="x", pady=(0, 8))
         rr = ttk.Frame(rf); rr.pack(fill="x")
@@ -5795,6 +5830,44 @@ class RoiPanel(ttk.Frame):
                 self._console.append(f"[Step 10b] Failed (exit {rc}).", "error")
         self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
                          on_line=self._console.append, on_done=_nat_done)
+
+    def _run_roi_stats(self):
+        """Per-nucleus cases-vs-controls group test (optional two-tailed / FDR)."""
+        script = SCRIPTS_ROOT / "utility" / "roi_group_stats.py"
+        if not script.is_file():
+            messagebox.showerror("Error", f"Not found:\n{script}"); return
+        roi_csv = self._rs_csv_var.get().strip()
+        cases   = self._rs_cases_var.get().strip()
+        ctrl    = self._rs_ctrl_var.get().strip()
+        if not roi_csv or not os.path.isfile(roi_csv):
+            messagebox.showerror("Error", "Set a ROI values CSV."); return
+        if not (cases and os.path.isfile(cases) and ctrl and os.path.isfile(ctrl)):
+            messagebox.showerror("Error", "Set the cases and controls list files."); return
+        out = self._rs_out_var.get().strip() or str(Path(roi_csv).with_name("group_roi_stats.csv"))
+        py = self._cfg.get("python_exe", tk.StringVar()).get().strip() or "python3"
+        cmd = [py, str(script), "--roi-csv", roi_csv, "--cases", cases,
+               "--controls", ctrl, "--out", out]
+        if self._rs_two_var.get():
+            cmd.append("--two-tailed")
+        if self._rs_fdr_var.get():
+            cmd.append("--fdr")
+        tail = "two-tailed" if self._rs_two_var.get() else "one-tailed cases>controls"
+        corr = "FDR" if self._rs_fdr_var.get() else "uncorrected"
+        self._console.separator()
+        self._console.append(f"[ROI stats] per-nucleus test ({tail}, {corr})…", "info")
+        self._rs_btn.config(state="disabled"); self._progress.start(10)
+        self._status.set("ROI group stats running…")
+
+        def _done(rc):
+            self._progress.stop(); self._rs_btn.config(state="normal")
+            if rc == 0:
+                self._status.set("ROI group stats complete ✓")
+                self._console.append(f"[ROI stats] wrote {out}", "ok")
+            else:
+                self._status.set(f"ROI group stats failed (exit {rc})")
+                self._console.append(f"[ROI stats] failed (exit {rc}).", "error")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append, on_done=_done)
 
 
 # ── Step navigation dashboard ─────────────────────────────────────────────────

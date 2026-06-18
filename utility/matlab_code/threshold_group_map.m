@@ -114,7 +114,9 @@ function threshold_group_map(analysis_dir, output_dir, spm_dir, varargin)
         case 'FWE'
             try
                 R = SPM.xVol.R;   S = SPM.xVol.S;   % resel counts + search volume
-                t_thr = spm_uc(p_thr, [1 erdf], 'T', R, 1, S);
+                % spm_uc gives a ONE-tailed RFT threshold at alpha; for a two-tailed test
+                % (abs(T) > t_thr below) use alpha/2 per tail (p_unc) so total FWE = p_thr.
+                t_thr = spm_uc(p_unc, [1 erdf], 'T', R, 1, S);
                 corr_tag = 'FWE';
             catch ME
                 warning('FWE correction unavailable (%s) — falling back to uncorrected.', ME.message);
