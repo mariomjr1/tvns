@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1040" viewBox="0 0 1320 1040"
+     font-family="Helvetica, Arial, sans-serif">
+  <!-- ============================================================= -->
+  <!-- tVNS 7T pipeline flow diagram  (light/paper theme, vector)    -->
+  <!-- Transparent background: no canvas rect on purpose.            -->
+  <!-- ============================================================= -->
+
+  <defs>
+    <!-- single reusable arrowhead -->
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7a8290"/>
+    </marker>
+    <!-- green arrowhead for result connectors -->
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2e8b57"/>
+    </marker>
+    <!-- purple arrowhead for brainstem connector -->
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7a4fa3"/>
+    </marker>
+  </defs>
+
+  <!-- ============================ TITLE ============================ -->
+  <g>
+    <text x="30" y="40" font-size="27" font-weight="bold" fill="#1a1a1a">tVNS 7T pipeline — from raw data to results</text>
+    <text x="32" y="66" font-size="13" fill="#5a6270">blue = pipeline step   ·   purple = brainstem add-on   ·   green = the output you get</text>
+  </g>
+
+  <!-- ============================ MAIN SPINE ====================== -->
+  <!-- box width 360, height 58; left edge x=90 -->
+  <g>
+    <!-- connectors between spine boxes (drawn first, behind boxes) -->
+    <line x1="270" y1="154" x2="270" y2="182" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="270" y1="240" x2="270" y2="268" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="270" y1="326" x2="270" y2="354" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="270" y1="412" x2="270" y2="440" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="270" y1="498" x2="270" y2="526" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- 00 Download -->
+    <g>
+      <rect x="90" y="96" width="360" height="58" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+      <text x="102" y="120" font-size="16" font-weight="bold" fill="#1a1a1a">00  Download DICOMs</text>
+      <text x="102" y="140" font-size="13" fill="#3a4452">pull raw scans from the archive</text>
+      <text x="464" y="129" font-size="13" fill="#1f7a4d">-&gt; rawdata/  (raw DICOMs)</text>
+    </g>
+    <!-- 01 BIDS conversion -->
+    <g>
+      <rect x="90" y="182" width="360" height="58" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+      <text x="102" y="206" font-size="16" font-weight="bold" fill="#1a1a1a">01  BIDS conversion</text>
+      <text x="102" y="226" font-size="13" fill="#3a4452">heudiconv + heuristic (auto-mapped)</text>
+      <text x="464" y="215" font-size="13" fill="#1f7a4d">-&gt; sourcedata/ NIfTI + AP/PA fieldmaps</text>
+    </g>
+    <!-- 02-04 Physio + RETROICOR -->
+    <g>
+      <rect x="90" y="268" width="360" height="58" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+      <text x="102" y="292" font-size="16" font-weight="bold" fill="#1a1a1a">02–04  Physio + RETROICOR</text>
+      <text x="102" y="312" font-size="13" fill="#3a4452">piezo/resp -&gt; R-DECO -&gt; clean the BOLD</text>
+      <text x="464" y="301" font-size="13" fill="#1f7a4d">-&gt; physio-cleaned BOLD (native)</text>
+    </g>
+    <!-- 05 fMRIPrep -->
+    <g>
+      <rect x="90" y="354" width="360" height="58" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+      <text x="102" y="378" font-size="16" font-weight="bold" fill="#1a1a1a">05  fMRIPrep</text>
+      <text x="102" y="398" font-size="13" fill="#3a4452">motion, SDC(TOPUP), STC, BBR, MNI, FreeSurfer</text>
+      <text x="464" y="387" font-size="13" fill="#1f7a4d">-&gt; preprocessed BOLD: T1w + MNI, confounds</text>
+    </g>
+    <!-- 06 Stim + motion -->
+    <g>
+      <rect x="90" y="440" width="360" height="58" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+      <text x="102" y="464" font-size="16" font-weight="bold" fill="#1a1a1a">06  Stim + motion</text>
+      <text x="102" y="484" font-size="13" fill="#3a4452">onsets from STIMTRIG + 6 motion + FD spikes</text>
+      <text x="464" y="473" font-size="13" fill="#1f7a4d">-&gt; first-level inputs</text>
+    </g>
+    <!-- 07 First-level GLM -->
+    <g>
+      <rect x="90" y="526" width="360" height="58" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+      <text x="102" y="550" font-size="16" font-weight="bold" fill="#1a1a1a">07  First-level GLM</text>
+      <text x="102" y="570" font-size="13" fill="#3a4452">Stim &gt; baseline  (FAST, motion-only)</text>
+      <text x="464" y="559" font-size="13" fill="#1f7a4d">-&gt; con (native)  +  wcon (MNI)</text>
+    </g>
+  </g>
+
+  <!-- ==================== BRAINSTEM ADD-ONS (05b / 05c) =========== -->
+  <g>
+    <!-- connector from step 05 right edge to the 05b/05c stack -->
+    <line x1="450" y1="383" x2="838" y2="354" stroke="#7a4fa3" stroke-width="1.5" marker-end="url(#arrowPurple)"/>
+    <!-- 05b Brainstem + pituitary seg -->
+    <rect x="840" y="332" width="330" height="46" rx="8" fill="#f0e8fa" stroke="#7a4fa3" stroke-width="1.5"/>
+    <text x="852" y="352" font-size="15" font-weight="bold" fill="#1a1a1a">05b  Brainstem + pituitary seg</text>
+    <text x="852" y="370" font-size="12" fill="#4a3a58">FreeSurfer -&gt; brainstem mask</text>
+    <!-- 05c Brainstem co-reg refine -->
+    <rect x="840" y="390" width="330" height="46" rx="8" fill="#f0e8fa" stroke="#7a4fa3" stroke-width="1.5"/>
+    <text x="852" y="410" font-size="15" font-weight="bold" fill="#1a1a1a">05c  Brainstem co-reg refine</text>
+    <text x="852" y="428" font-size="12" fill="#4a3a58">masked ANTs SyN (uses 05b mask)</text>
+    <!-- note -->
+    <text x="845" y="456" font-size="12" fill="#7a4fa3">improves brainstem alignment -&gt; used by 10b (native ROIs)</text>
+  </g>
+
+  <!-- ==================== BRANCH AT STEP 07 (TWO ROUTES) ========== -->
+  <g>
+    <text x="96" y="600" font-size="16" font-weight="bold" fill="#1a1a1a">TWO ROUTES (run both):</text>
+    <!-- arrows from 07 bottom-center down into each column -->
+    <line x1="270" y1="584" x2="300" y2="632" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="270" y1="584" x2="890" y2="632" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- ===== LEFT COLUMN — ROUTE A (MNI) ===== -->
+  <!-- column x=110, width 380; cy=638 -->
+  <g>
+    <!-- internal connectors -->
+    <line x1="300" y1="692" x2="300" y2="716" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="300" y1="766" x2="300" y2="788" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="300" y1="838" x2="300" y2="862" stroke="#2e8b57" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+
+    <!-- ROUTE A header -->
+    <rect x="110" y="638" width="380" height="54" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+    <text x="122" y="662" font-size="16" font-weight="bold" fill="#1a1a1a">ROUTE A — MNI (wcon)</text>
+    <text x="122" y="681" font-size="13" fill="#3a4452">group localization / whole-brain</text>
+
+    <!-- 08 Second-level -->
+    <rect x="110" y="716" width="380" height="50" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+    <text x="122" y="738" font-size="16" font-weight="bold" fill="#1a1a1a">08  Second-level</text>
+    <text x="122" y="756" font-size="13" fill="#3a4452">cases &gt; controls (two-sample, 1-tailed)</text>
+
+    <!-- 09 Threshold -->
+    <rect x="110" y="788" width="380" height="50" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+    <text x="122" y="810" font-size="16" font-weight="bold" fill="#1a1a1a">09  Threshold</text>
+    <text x="122" y="828" font-size="13" fill="#3a4452">FDR / FWE (uncorr = visualization)</text>
+
+    <!-- RESULT 1 -->
+    <rect x="110" y="862" width="380" height="60" rx="8" fill="#e3f3ea" stroke="#2e8b57" stroke-width="1.5"/>
+    <text x="122" y="886" font-size="15" font-weight="bold" fill="#1a1a1a">RESULT 1 — group activation map (MNI)</text>
+    <text x="122" y="906" font-size="13" fill="#2f4f3f">where in the brain cases differ from controls</text>
+  </g>
+
+  <!-- ===== RIGHT COLUMN — ROUTE B (native) ===== -->
+  <!-- column x=720, width 470; cy=638 -->
+  <g>
+    <!-- internal connectors -->
+    <line x1="955" y1="692" x2="955" y2="716" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="955" y1="766" x2="955" y2="788" stroke="#7a8290" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="955" y1="838" x2="955" y2="862" stroke="#2e8b57" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+
+    <!-- ROUTE B header -->
+    <rect x="720" y="638" width="470" height="54" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+    <text x="732" y="662" font-size="16" font-weight="bold" fill="#1a1a1a">ROUTE B — native/T1w (con)</text>
+    <text x="732" y="681" font-size="13" fill="#3a4452">best for small brainstem nuclei</text>
+
+    <!-- 10b Atlas -> native (brainstem add-on => lilac) -->
+    <rect x="720" y="716" width="470" height="50" rx="8" fill="#f0e8fa" stroke="#7a4fa3" stroke-width="1.5"/>
+    <text x="732" y="738" font-size="16" font-weight="bold" fill="#1a1a1a">10b  Atlas -&gt; native (via 05c)</text>
+    <text x="732" y="756" font-size="13" fill="#4a3a58">Brainstem Navigator warped to each subject</text>
+
+    <!-- 10 ROI extract -->
+    <rect x="720" y="788" width="470" height="50" rx="8" fill="#e8f0fb" stroke="#3b6fb0" stroke-width="1.5"/>
+    <text x="732" y="810" font-size="16" font-weight="bold" fill="#1a1a1a">10  ROI extract</text>
+    <text x="732" y="828" font-size="13" fill="#3a4452">prob-weighted mean, L/R, per nucleus</text>
+
+    <!-- RESULT 2 -->
+    <rect x="720" y="862" width="470" height="60" rx="8" fill="#e3f3ea" stroke="#2e8b57" stroke-width="1.5"/>
+    <text x="732" y="886" font-size="15" font-weight="bold" fill="#1a1a1a">RESULT 2 — per-nucleus β table (NTS/VSM, LC, raphe…)</text>
+    <text x="732" y="906" font-size="13" fill="#2f4f3f">how strongly each brainstem nucleus responds</text>
+  </g>
+
+  <!-- ==================== RESULT 3 — QC DIGEST (full width) ======= -->
+  <g>
+    <rect x="110" y="938" width="1080" height="52" rx="8" fill="#e3f3ea" stroke="#2e8b57" stroke-width="1.5"/>
+    <text x="122" y="960" font-size="15" font-weight="bold" fill="#1a1a1a">RESULT 3 — QC digest (codes/qc/qc_digest.csv) + snapshots</text>
+    <text x="122" y="979" font-size="12" fill="#2f4f3f">per subject: mean FD, %motion, SDC, cardinality, piezo, contrast, ROI geometry -&gt; OK / REVIEW</text>
+  </g>
+
+  <!-- ============================ FOOTER ========================== -->
+  <text x="32" y="1018" font-size="12" fill="#5a6270">Primary brainstem answer = RESULT 2 (native ROIs).  RESULT 1 = MNI map for localization/figures.  RESULT 3 = what to check before trusting results.</text>
+</svg>

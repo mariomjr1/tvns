@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1050" viewBox="0 0 1440 1050"
+     font-family="Helvetica, Arial, sans-serif">
+  <!-- ============================================================= -->
+  <!-- tVNS pipeline — data products table (light/paper theme, vector)-->
+  <!-- Transparent background: no canvas rect on purpose.            -->
+  <!-- Row geometry mirrors pipeline_files.py:                       -->
+  <!--   pad=12, line_h=18, row height = 24 + 18*len(files), top=96  -->
+  <!-- ============================================================= -->
+
+  <!-- ============================ TITLE ============================ -->
+  <g>
+    <text x="26" y="38" font-size="26" font-weight="bold" fill="#1a1a1a">tVNS pipeline — data products (which file each step writes)</text>
+    <text x="28" y="62" font-size="12" fill="#5a6270">paths are under  &lt;project&gt;/  (rawdata/, sourcedata/, sourcedata/derivatives/, codes/).  green = file on disk · green rows = the 3 results you report.</text>
+  </g>
+
+  <!-- ============================ HEADER ROW ====================== -->
+  <g>
+    <text x="24" y="90" font-size="15" font-weight="bold" fill="#5a6270">STEP</text>
+    <text x="196" y="90" font-size="15" font-weight="bold" fill="#5a6270">FILE(S) WRITTEN</text>
+    <text x="1126" y="90" font-size="15" font-weight="bold" fill="#5a6270">FEEDS / RESULT</text>
+  </g>
+
+  <!-- ============================ TABLE ROWS ====================== -->
+  <!-- monospace stack for file paths; text x_step=24, x_file=196, x_feed=1126 -->
+  <g font-size="13">
+
+    <!-- 00 Download  (1 file line) -> y 96..138 -->
+    <g>
+      <line x1="18" y1="96" x2="1422" y2="96" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="113" font-size="15" font-weight="bold" fill="#222">00 Download</text>
+      <text x="196" y="114" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">rawdata/&lt;subj&gt;/DICOM/raw/…  +  DICOM/LOG/step0_DONE.txt</text>
+      <text x="1126" y="113" font-size="12" fill="#3a4452">raw data</text>
+    </g>
+
+    <!-- 01 BIDS  (2 file lines) -> y 138..198 -->
+    <g>
+      <line x1="18" y1="138" x2="1422" y2="138" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="155" font-size="15" font-weight="bold" fill="#222">01 BIDS</text>
+      <text x="196" y="156" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">sourcedata/&lt;subj&gt;/ses-01/{anat,func,fmap}/*.nii.gz + *.json</text>
+      <text x="196" y="174" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">.heudiconv/&lt;subj&gt;/info/dicominfo*.tsv</text>
+      <text x="1126" y="155" font-size="12" fill="#3a4452">tidy dataset</text>
+    </g>
+
+    <!-- 02 Physioparse  (2 file lines) -> y 198..258 -->
+    <g>
+      <line x1="18" y1="198" x2="1422" y2="198" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="215" font-size="15" font-weight="bold" fill="#222">02 Physioparse</text>
+      <text x="196" y="216" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/physio/&lt;subj&gt;/parsed/task-*_run-*.mat</text>
+      <text x="196" y="234" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/physio/&lt;subj&gt;/qc/physio_qc_metrics.csv</text>
+      <text x="1126" y="215" font-size="12" fill="#3a4452">physio segments</text>
+    </g>
+
+    <!-- 03 Preproc+RDECO  (1 file line) -> y 258..300 -->
+    <g>
+      <line x1="18" y1="258" x2="1422" y2="258" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="275" font-size="15" font-weight="bold" fill="#222">03 Preproc+RDECO</text>
+      <text x="196" y="276" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/physio/&lt;subj&gt;/preprocessed/*_filtered.mat, *_rdeco.mat</text>
+      <text x="1126" y="275" font-size="12" fill="#3a4452">heartbeats</text>
+    </g>
+
+    <!-- 04 RETROICOR  (2 file lines) -> y 300..360 -->
+    <g>
+      <line x1="18" y1="300" x2="1422" y2="300" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="317" font-size="15" font-weight="bold" fill="#222">04 RETROICOR</text>
+      <text x="196" y="318" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/physio/&lt;subj&gt;/retroicor/output/*_retro-corrected.nii.gz</text>
+      <text x="196" y="336" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">…/output/*_retro-pctvar.mat   ·   &lt;subj&gt;_cardiac_decision.csv</text>
+      <text x="1126" y="317" font-size="12" fill="#3a4452">cleaned BOLD</text>
+    </g>
+
+    <!-- 05 fMRIPrep  (3 file lines) -> y 360..438 -->
+    <g>
+      <line x1="18" y1="360" x2="1422" y2="360" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="377" font-size="15" font-weight="bold" fill="#222">05 fMRIPrep</text>
+      <text x="196" y="378" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/fmriprep/&lt;subj&gt;/ses-01/func/*_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz</text>
+      <text x="196" y="396" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">  …/func/*_space-T1w_desc-preproc_bold.nii.gz  +  *_desc-confounds_timeseries.tsv</text>
+      <text x="196" y="414" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">  …/anat/*_from-MNI152NLin2009cAsym_to-T1w_*xfm.h5   ·   fmriprep/qc_fd_summary.json</text>
+      <text x="1126" y="377" font-size="12" fill="#3a4452">preprocessed</text>
+    </g>
+
+    <!-- 05b Seg  (1 file line) -> y 438..480 -->
+    <g>
+      <line x1="18" y1="438" x2="1422" y2="438" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="455" font-size="15" font-weight="bold" fill="#222">05b Seg</text>
+      <text x="196" y="456" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/freesurfer/&lt;subj&gt;/mri/brainstemSsLabels*.mgz, *pglands*.mgz</text>
+      <text x="1126" y="455" font-size="12" fill="#3a4452">brainstem mask</text>
+    </g>
+
+    <!-- 05c Refine  (1 file line) -> y 480..522 -->
+    <g>
+      <line x1="18" y1="480" x2="1422" y2="480" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="497" font-size="15" font-weight="bold" fill="#222">05c Refine</text>
+      <text x="196" y="498" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/brainstem_coreg/&lt;subj&gt;/&lt;subj&gt;_brainstemRefine_1Warp.nii.gz (+InverseWarp)</text>
+      <text x="1126" y="497" font-size="12" fill="#3a4452">better align</text>
+    </g>
+
+    <!-- Atlas build  (2 file lines) -> y 522..582 -->
+    <g>
+      <line x1="18" y1="522" x2="1422" y2="522" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="539" font-size="15" font-weight="bold" fill="#222">Atlas build</text>
+      <text x="196" y="540" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/brainstem/brainstem_navigator_atlas.nii.gz</text>
+      <text x="196" y="558" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">  + *_labels.csv (44 nuclei)  + *_probmax.nii.gz (weights)</text>
+      <text x="1126" y="539" font-size="12" fill="#3a4452">atlas</text>
+    </g>
+
+    <!-- 06 Stim+motion  (2 file lines) -> y 582..642 -->
+    <g>
+      <line x1="18" y1="582" x2="1422" y2="582" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="599" font-size="15" font-weight="bold" fill="#222">06 Stim+motion</text>
+      <text x="196" y="600" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/physio/&lt;subj&gt;/stimtrigger/*_bold_stim.txt</text>
+      <text x="196" y="618" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/physio/first_level/02_motion_regressors/*_motion_regressors.txt</text>
+      <text x="1126" y="599" font-size="12" fill="#3a4452">GLM inputs</text>
+    </g>
+
+    <!-- 07 GLM · MNI  (1 file line) -> y 642..684 -->
+    <g>
+      <line x1="18" y1="642" x2="1422" y2="642" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="659" font-size="15" font-weight="bold" fill="#222">07 GLM · MNI</text>
+      <text x="196" y="660" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/spm/first_level_mni/&lt;subj&gt;/&lt;task&gt;/wcon_0001.nii  (+con_0001.nii, SPM.mat)</text>
+      <text x="1126" y="659" font-size="12" fill="#3a4452">Route A</text>
+    </g>
+
+    <!-- 07 GLM · T1w  (1 file line) -> y 684..726 -->
+    <g>
+      <line x1="18" y1="684" x2="1422" y2="684" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="701" font-size="15" font-weight="bold" fill="#222">07 GLM · T1w</text>
+      <text x="196" y="702" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/spm/first_level_t1w/&lt;subj&gt;/&lt;task&gt;/con_0001.nii  (+SPM.mat)</text>
+      <text x="1126" y="701" font-size="12" fill="#3a4452">Route B</text>
+    </g>
+
+    <!-- 08 Group  (2 file lines) -> y 726..786 -->
+    <g>
+      <line x1="18" y1="726" x2="1422" y2="726" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="743" font-size="15" font-weight="bold" fill="#222">08 Group</text>
+      <text x="196" y="744" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/spm/second_level/groups/&lt;task&gt;/SPM.mat + spmT_0001.nii</text>
+      <text x="196" y="762" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/spm/second_level/.../_contrast_check.csv</text>
+      <text x="1126" y="743" font-size="12" fill="#3a4452">cases&gt;controls</text>
+    </g>
+
+    <!-- 09 Threshold  (RESULT 1, 1 file line) -> y 786..828 -->
+    <g>
+      <rect x="18" y="786" width="1404" height="42" fill="#e3f3ea"/>
+      <line x1="18" y1="786" x2="1422" y2="786" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="803" font-size="15" font-weight="bold" fill="#222">09 Threshold</text>
+      <text x="196" y="804" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/spm/second_level/thresholded/&lt;task&gt;/*_FDR_p0.05_tmap.nii (+ *_mask.nii)</text>
+      <text x="1126" y="803" font-size="12" font-weight="bold" fill="#1a6b42">RESULT 1 — MNI map</text>
+    </g>
+
+    <!-- 10 ROI  (1 file line) -> y 828..870 -->
+    <g>
+      <line x1="18" y1="828" x2="1422" y2="828" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="845" font-size="15" font-weight="bold" fill="#222">10 ROI</text>
+      <text x="196" y="846" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/spm/roi/&lt;peak&gt;/roi_values.csv  (+ _roi_geometry_check.csv, sphere_*mm.nii)</text>
+      <text x="1126" y="845" font-size="12" fill="#3a4452">ROI values (MNI)</text>
+    </g>
+
+    <!-- 10b Native ROI  (RESULT 2, 2 file lines) -> y 870..930 -->
+    <g>
+      <rect x="18" y="870" width="1404" height="60" fill="#e3f3ea"/>
+      <line x1="18" y1="870" x2="1422" y2="870" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="887" font-size="15" font-weight="bold" fill="#222">10b Native ROI</text>
+      <text x="196" y="888" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">derivatives/spm/roi/brainstem_native/group_brainstem_nuclei_native.csv</text>
+      <text x="196" y="906" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">  &lt;subj&gt;/&lt;subj&gt;_atlas-in-native.nii.gz  (+ _C1/_C2/_C3 candidates)</text>
+      <text x="1126" y="887" font-size="12" font-weight="bold" fill="#1a6b42">RESULT 2 — β per nucleus</text>
+    </g>
+
+    <!-- QC digest  (RESULT 3, 2 file lines) -> y 930..990 -->
+    <g>
+      <rect x="18" y="930" width="1404" height="60" fill="#e3f3ea"/>
+      <line x1="18" y1="930" x2="1422" y2="930" stroke="#d7dbe2" stroke-width="1"/>
+      <text x="24" y="947" font-size="15" font-weight="bold" fill="#222">QC digest</text>
+      <text x="196" y="948" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">codes/qc/qc_digest.csv  +  qc_digest.md</text>
+      <text x="196" y="966" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#1f7a4d">  codes/qc/group_{sdc,cardinality,piezo}_*.csv  ·  snapshots/  ·  provenance/</text>
+      <text x="1126" y="947" font-size="12" font-weight="bold" fill="#1a6b42">RESULT 3 — QC</text>
+    </g>
+
+    <!-- closing separator -->
+    <line x1="18" y1="990" x2="1422" y2="990" stroke="#d7dbe2" stroke-width="1"/>
+  </g>
+
+  <!-- ============================ FOOTER ========================== -->
+  <text x="26" y="1024" font-size="12" fill="#5a6270">Report: RESULT 2 (per-nucleus β, native) = primary brainstem endpoint · RESULT 1 (MNI map) = localization/figure · RESULT 3 (qc_digest.csv) = review before trusting.</text>
+</svg>
