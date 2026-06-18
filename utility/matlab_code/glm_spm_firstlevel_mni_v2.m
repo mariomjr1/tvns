@@ -85,6 +85,11 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     addParameter(p, 'BrainstemMask',       '',    @(x) ischar(x)||isstring(x));
     addParameter(p, 'RestrictBrainstem',   false, @(x) islogical(x)||isnumeric(x));
     addParameter(p, 'BrainstemSmoothFWHM', [],    @(x) isnumeric(x));
+    % HPF cutoff (s) and serial-correlation model. Default cvi = FAST (better than AR(1)
+    % for short-TR 7T data; Corbin 2018, Olszowy 2019). Hpf must be >= 2x the longest
+    % period of interest — checked at runtime against the onsets (Task 15/17).
+    addParameter(p, 'Hpf',          128,    @(x) isnumeric(x)&&isscalar(x));
+    addParameter(p, 'Cvi',          'FAST', @(x) ischar(x)||isstring(x));
     parse(p, subject_list_file, fmriprep_dir, firstlevel_dir, output_dir, spm_dir, varargin{:});
 
     R   = p.Results;
@@ -107,6 +112,8 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
     brainstem_mask = char(R.BrainstemMask);
     restrict_bs    = logical(R.RestrictBrainstem);
     bs_fwhm        = R.BrainstemSmoothFWHM;
+    hpf_s          = R.Hpf;
+    cvi            = char(R.Cvi);
     if restrict_bs && (isempty(brainstem_mask) || exist(brainstem_mask, 'file') ~= 2)
         warning('RestrictBrainstem on but BrainstemMask not found (%s) — ignoring.', brainstem_mask);
         restrict_bs = false;
@@ -230,7 +237,7 @@ function glm_spm_firstlevel_mni_v2(subject_list_file, fmriprep_dir, ...
                 end
                 run_one_glm(se, out_sp, warp_sp, subj, ses, task, run, func_dir, ...
                     fmriprep_dir, eff_fwhm, eff_prefix, TR, stim_dir, ...
-                    motion_dir, mni_ref, spm_dir, brainstem_mask, restrict_bs);
+                    motion_dir, mni_ref, spm_dir, brainstem_mask, restrict_bs, hpf_s, cvi);
             end
         end
         fprintf('DONE subject: %s\n', subj);
@@ -246,9 +253,11 @@ end
 
 function run_one_glm(space_entity, out_dir, do_warp, subj, ses, task, run, func_dir, ...
         fmriprep_dir, smooth_fwhm, smooth_prefix, TR, stim_dir, motion_dir, mni_ref, spm_dir, ...
-        brainstem_mask, restrict_bs)
+        brainstem_mask, restrict_bs, hpf_s, cvi)
     if nargin < 17, brainstem_mask = ''; end
     if nargin < 18, restrict_bs = false; end
+    if nargin < 19 || isempty(hpf_s), hpf_s = 128; end
+    if nargin < 20 || isempty(cvi),   cvi = 'FAST'; end
 % Model one acquisition space. If space is MNI the con_*.nii are ALREADY in MNI and
 % are copied to wcon_*.nii (so the step08 group analysis finds them) — no SPM warp.
 % If T1w and do_warp, con_*.nii are warped to MNI via T1 segmentation.
@@ -329,6 +338,19 @@ function run_one_glm(space_entity, out_dir, do_warp, subj, ses, task, run, func_
     cond(1).pmod     = struct('name', {}, 'param', {}, 'poly', {});
     cond(1).orth     = 1;
 
+    % HPF sanity check vs the paradigm (Task 15): SPM's high-pass cutoff must be >= 2x
+    % the longest period of interest, else the task regressor is attenuated. Estimate the
+    % longest period from the onsets and warn (does not abort — flag + log).
+    if numel(cond(1).onset) >= 2
+        max_isi = max(diff(sort(cond(1).onset(:))));
+        if isfinite(max_isi) && max_isi > 0 && hpf_s < 2*max_isi
+            warning(['[HPF] %s: HPF=%g s may be too short — longest onset interval ~%.1f s ' ...
+                     '(use HPF >= %.0f s) or the task regressor is attenuated.'], ...
+                     task, hpf_s, max_isi, ceil(2*max_isi));
+        end
+    end
+    fprintf(' [%s] HPF=%g s, cvi=%s\n', task, hpf_s, cvi);
+
     % ── Motion nuisance (RETROICOR already removed from the image upstream) ───
     motion_file = fullfile(motion_dir, sprintf( ...
         '%s_ses-%s_task-%s_run-%s_motion_regressors.txt', subj, ses, task, run));
@@ -349,13 +371,13 @@ function run_one_glm(space_entity, out_dir, do_warp, subj, ses, task, run, func_
     mb{1}.spm.stats.fmri_spec.sess(1).multi = {''};
     mb{1}.spm.stats.fmri_spec.sess(1).regress = struct('name', {}, 'val', {});
     mb{1}.spm.stats.fmri_spec.sess(1).multi_reg = { iff(~isempty(motion_file), motion_file, '') };
-    mb{1}.spm.stats.fmri_spec.sess(1).hpf = 128;
+    mb{1}.spm.stats.fmri_spec.sess(1).hpf = hpf_s;
     mb{1}.spm.stats.fmri_spec.bases.hrf.derivs = [0 0];
     mb{1}.spm.stats.fmri_spec.volt    = 1;
     mb{1}.spm.stats.fmri_spec.global  = 'None';
     mb{1}.spm.stats.fmri_spec.mask    = {mask_in_bold};
     mb{1}.spm.stats.fmri_spec.mthresh = 0;
-    mb{1}.spm.stats.fmri_spec.cvi     = 'AR(1)';
+    mb{1}.spm.stats.fmri_spec.cvi     = cvi;
     spm_jobman('run', mb);
 
     spm_mat = fullfile(out_dir, 'SPM.mat');

@@ -106,6 +106,10 @@ def main():
     ap.add_argument("--roi-labels", nargs="+", type=int, default=None,
                     help="Integer label values to extract from --roi-atlas "
                          "(default: all nonzero labels).")
+    ap.add_argument("--roi-weight", default=None,
+                    help="Optional probability map (e.g. the atlas *_probmax.nii.gz): ROI means "
+                         "become probability-WEIGHTED (sum(con*p)/sum(p)) to reduce partial-volume "
+                         "bias on small nuclei. Resampled to the reference grid.")
     ap.add_argument("--roi-label-names", nargs="+", default=None,
                     help="Optional names for --roi-labels (same count/order).")
     args = ap.parse_args()
@@ -182,14 +186,23 @@ def main():
         print(f"  significance mask: {int(sig_mask.sum())} sig voxels; "
               f"{n_sig_in} inside the {int(r_small)}mm sphere")
 
+    # ── Optional probability weight map (prob-weighted ROI means) ─────────────
+    wmap = None
+    if args.roi_weight:
+        if not os.path.isfile(args.roi_weight):
+            print(f"ERROR: roi-weight not found: {args.roi_weight}", file=sys.stderr); sys.exit(1)
+        wmap = _to_ref(args.roi_weight).astype(np.float64)
+        wmap[~np.isfinite(wmap)] = 0.0
+        print(f"  roi-weight: probability-weighted means from {os.path.basename(args.roi_weight)}")
+
     # ── Mask-based ROIs (Task 05 C4): whole-mask + per-nucleus atlas labels ───
-    roi_specs = []   # (column_name, bool_array_on_ref_grid)
+    roi_specs = []   # (column_name, bool_array_on_ref_grid, weight_array_or_None)
     for mpath in (args.roi_mask or []):
         if not os.path.isfile(mpath):
             print(f"ERROR: roi-mask not found: {mpath}", file=sys.stderr); sys.exit(1)
         arr = _to_ref(mpath) > 0.5
         name = "roi_" + os.path.basename(mpath).split(".nii")[0]
-        roi_specs.append((name, arr))
+        roi_specs.append((name, arr, wmap))
         print(f"  roi-mask {name}: {int(arr.sum())} voxels")
     if args.roi_atlas:
         if not os.path.isfile(args.roi_atlas):
@@ -202,7 +215,7 @@ def main():
             sys.exit(1)
         for v, nm in zip(labels, names):
             arr = adata == v
-            roi_specs.append((f"nuc_{nm}", arr))
+            roi_specs.append((f"nuc_{nm}", arr, wmap))
             print(f"  atlas label {v} ({nm}): {int(arr.sum())} voxels")
 
     # ── Build the CSV header dynamically ──────────────────────────────────────
@@ -273,9 +286,15 @@ def main():
                 sv = data[small_mask & sig_mask]
                 row.append(float(np.nanmean(sv)) if sv.size else float("nan"))
                 msg += f" sig={row[-1]:.4f}"
-        for name, arr in roi_specs:
+        for name, arr, wt in roi_specs:
             vals = data[arr]
-            mval = float(np.nanmean(vals)) if vals.size else float("nan")
+            if wt is not None:
+                w = wt[arr]
+                good = np.isfinite(vals) & np.isfinite(w) & (w > 0)
+                mval = (float(np.sum(vals[good] * w[good]) / np.sum(w[good]))
+                        if good.any() and np.sum(w[good]) > 0 else float("nan"))
+            else:
+                mval = float(np.nanmean(vals)) if vals.size else float("nan")
             row.append(mval)
             msg += f" {name}={mval:.4f}"
         rows.append(tuple(row))

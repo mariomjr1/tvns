@@ -4771,6 +4771,8 @@ class FirstLevelPanel(ttk.Frame):
         self._restrict_bs  = tk.BooleanVar(value=False)   # restrict GLM to brainstem (Task 05 C2)
         self._bs_mask_var  = cfg["brainstem_mask"]        # shared brainstem mask path
         self._bs_smooth_var = tk.StringVar(value="")      # optional brainstem smoothing (mm)
+        self._cvi_var       = tk.StringVar(value="FAST")  # serial model: FAST (default) | AR(1)
+        self._hpf_var       = tk.StringVar(value="128")   # high-pass cutoff (s)
         # Single-folder warp (warp ANY con folder + a T1 → MNI)
         self._wf_con_var   = tk.StringVar()
         self._wf_t1_var    = tk.StringVar()
@@ -4840,6 +4842,16 @@ class FirstLevelPanel(ttk.Frame):
         er("Run (run-__):", self._run_var)
         er("TR (seconds):", self._tr_var)
         er("Smoothing FWHM (mm, isotropic):", self._smooth_var)
+        er("High-pass filter (s):", self._hpf_var)
+        cvr = ttk.Frame(pm); cvr.pack(fill="x", pady=2)
+        ttk.Label(cvr, text="Serial-correlation model (cvi):", width=30, anchor="w").pack(side="left")
+        ttk.Combobox(cvr, textvariable=self._cvi_var, width=8, state="readonly",
+                     values=["FAST", "AR(1)"]).pack(side="left")
+        ttk.Label(pm, foreground="gray", wraplength=560,
+                  text=("FAST (default) whitens short-TR 7T data better than AR(1). HPF must be "
+                        "≥ 2× the longest task period — the GLM warns at runtime if it's too short. "
+                        "For brainstem nuclei use a small/zero brainstem smoothing below (≤1.5 mm).")
+                  ).pack(anchor="w")
 
         spr = ttk.Frame(pm); spr.pack(fill="x", pady=(4, 0))
         ttk.Label(spr, text="First-level space:").pack(side="left")
@@ -5010,6 +5022,8 @@ class FirstLevelPanel(ttk.Frame):
             "restrict_bs": "1" if self._restrict_bs.get() else "0",
             "bs_mask": self._bs_mask_var.get().strip(),
             "bs_smooth": self._bs_smooth_var.get().strip(),
+            "cvi": self._cvi_var.get().strip() or "FAST",
+            "hpf": self._hpf_var.get().strip() or "128",
         }
 
         self._console.separator()
@@ -5039,7 +5053,8 @@ class FirstLevelPanel(ttk.Frame):
         cmd = ["bash", c["script"], c["sublist"], c["sd"], c["flvl"], out,
                c["spm"], c["matlab"], c["mcode"], c["ses"], c["run"], c["tr"],
                c["smooth"], c["do_mni"], c["env"], c["warp_only"],
-               c["use_sourcedata"], space, c["restrict_bs"], c["bs_mask"], c["bs_smooth"]]
+               c["use_sourcedata"], space, c["restrict_bs"], c["bs_mask"], c["bs_smooth"],
+               c["cvi"], c["hpf"]]
         self._console.append(f"[Step 07] Route {space} → {out}", "info")
         self._status.set(f"Step 07 ({space}) running…")
         self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
@@ -5609,6 +5624,14 @@ class RoiPanel(ttk.Frame):
         ngr = ttk.Frame(nf); ngr.pack(fill="x", pady=2)
         ttk.Label(ngr, text="Con glob:", width=20, anchor="w").pack(side="left")
         ttk.Entry(ngr, textvariable=self._nat_con_glob_var, width=24).pack(side="left")
+        chr_ = ttk.Frame(nf); chr_.pack(fill="x", pady=2)
+        ttk.Label(chr_, text="Transform chain:", width=20, anchor="w").pack(side="left")
+        self._nat_chain_var = tk.StringVar(value="C2")
+        ttk.Combobox(chr_, textvariable=self._nat_chain_var, width=6, state="readonly",
+                     values=["C1", "C2", "C3"]).pack(side="left")
+        ttk.Label(chr_, foreground="gray",
+                  text="C1=no refine · C2=refine-inv · C3=refine-fwd (all emitted; pick by overlay)"
+                  ).pack(side="left", padx=(8, 0))
         PathRow(nf, "Output dir:", mode="dir",
                 var=self._nat_out_var, label_width=20).pack(fill="x", pady=2)
         self._natroi_btn = ttk.Button(nf, text="▶ Atlas→native ROIs (step10b)",
@@ -5751,7 +5774,8 @@ class RoiPanel(ttk.Frame):
         con_glob  = self._nat_con_glob_var.get().strip() or "*/con_0001.nii"
         cmd = ["bash", str(script), subjlist, fp_der, coreg_dir, atlas,
                con_root, con_glob, out, cfg["python_exe"].get().strip(),
-               self._roilabels_var.get().strip(), self._roinames_var.get().strip()]
+               self._roilabels_var.get().strip(), self._roinames_var.get().strip(),
+               "", self._nat_chain_var.get().strip() or "C2"]
 
         self._console.separator()
         self._console.append("[Step 10b] atlas→native ROIs (via step05c composed warp)…", "info")

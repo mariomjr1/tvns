@@ -43,6 +43,12 @@ step09_p_value.sh <analysis_dir> <output_dir> \
 > `FDR` (false-discovery rate via `spm_uc_FDR`) when you need formal control. Both fall back
 > to uncorrected (with a warning) if SPM's RFT fields / FDR helper are unavailable. The
 > output filenames are tagged with the method (`unc` / `FWE` / `FDR`) so runs don't overwrite.
+>
+> **Reporting note (peer review):** `none` is the engineering default, **not** the reporting
+> default. For the **brainstem ROI** analysis the *primary* inferential statement should be
+> **FDR across the pre-specified nuclei × tasks** (step 10); uncorrected voxelwise maps are
+> for **visualization/localization only** (42–44 ROIs × 2 tasks × one-tailed is a large,
+> undeclared multiplicity otherwise — Eklund 2016).
 
 ## 4. Run
 ```bash

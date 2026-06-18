@@ -477,6 +477,19 @@ contrast to MNI for step 08) — native space is used **only** at the ROI-extrac
 > nuclei?) before trusting the native brainstem ROI numbers. Until then, the MNI atlas
 > ROIs are a rougher fallback.
 
+### Best practice for the brainstem (peer-review, 2026-06-18)
+- **Native per-nucleus extraction = PRIMARY** (route b/step10b): data isn't re-warped to a
+  template, minimal partial volume, uses step05c. **MNI = exploratory** (localization/figure).
+- **No double-dipping:** anatomical atlas ROIs are data-independent → legitimate confirmatory
+  primary. *Never* define an ROI from a peak then extract β from the same subjects at it.
+- **Extract:** β (and percent-signal-change when available); **probability-weighted** ROI mean
+  (`roi_extract --roi-weight …_probmax.nii.gz`); **L/R separate** for VSM/NTS & LC.
+- **Stats:** **FDR across pre-specified nuclei × tasks** is primary (not all 44; specify the
+  autonomic set a priori). **Smoothing 0 mm** for brainstem ROIs, ≤1.5 mm for brainstem maps.
+- **GLM:** `cvi = FAST`, HPF verified vs the paradigm (both now defaults/checked in step 07).
+- Open validation (cluster): pick the step10b transform chain (C1/C2/C3) by overlay; run the
+  Task-12 physio-order pilot; quantify the 2009b↔2009c brainstem residual. See [SOP 10 §6b](SOP_10_roi.md#6b-brainstem-nuclei-rois-atlas--native-space-step10b).
+
 ---
 
 ## G. The brainstem sub-pipeline

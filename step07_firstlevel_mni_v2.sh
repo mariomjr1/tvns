@@ -81,6 +81,8 @@ SPACE="${16:-MNI}"
 RESTRICT_BS="${17:-0}"            # 1 = restrict GLM to the brainstem mask
 BRAINSTEM_MASK="${18:-}"         # brainstem_mask.nii (must match the modeling space)
 BRAINSTEM_SMOOTH="${19:-}"       # optional smaller FWHM (mm) for brainstem runs
+CVI="${20:-FAST}"                # serial-correlation model: FAST (default) | AR(1)
+HPF="${21:-128}"                 # high-pass filter cutoff (s); checked vs paradigm at runtime
 
 FMRIPREP_DIR="${SOURCEDATA}/derivatives/fmriprep"
 
@@ -101,6 +103,7 @@ echo " TR=${TR}  Smooth=${SMOOTH}mm  Session=ses-${SESSION}  DoMNI=${DO_MNI}  Wa
 echo " GLM nuisance: motion + FD spikes only (physio removed pre-fMRIPrep by RETROICOR)"
 echo " First-level space: ${SPACE}  (default MNI = direct fMRIPrep MNI BOLD; T1w+SPM warp DoMNI=${DO_MNI} is optional legacy)"
 echo " Restrict to brainstem: ${RESTRICT_BS}  mask: ${BRAINSTEM_MASK:-(none)}  bs-smooth: ${BRAINSTEM_SMOOTH:-(default)}"
+echo " Serial model (cvi): ${CVI}   HPF: ${HPF}s   (HPF verified vs paradigm at runtime)"
 echo " Date:          $(date)"
 echo "============================================"
 echo ""
@@ -174,6 +177,7 @@ glm_spm_firstlevel_mni_v2( \
     'Space', '${SPACE}', \
     'RestrictBrainstem', ${RESTBS_ML}, 'BrainstemMask', '${BRAINSTEM_MASK}', \
     ${BS_SMOOTH_ARG} \
+    'Cvi', '${CVI}', 'Hpf', ${HPF}, \
     'SmoothPrefix', 's3' );"
 
 echo "Running MATLAB first-level + MNI..."

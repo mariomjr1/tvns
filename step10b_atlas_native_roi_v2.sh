@@ -43,6 +43,13 @@ fi
 SUBJLIST="$1"; FP_DER="$2"; COREG_DIR="$3"; ATLAS_MNI="$4"
 CON_ROOT="$5"; CON_GLOB="$6"; OUT_DIR="$7"; PYTHON="$8"
 LABELS="${9:-}"; NAMES="${10:-}"; ANTS_BIN="${11:-}"
+# Which composed transform chain to use for the canonical atlas-in-native + extraction.
+# The chain is genuinely ambiguous until validated by a NUCLEUS-scale overlay (review M1),
+# so we always EMIT all candidates and CHAIN selects which one is used:
+#   C1 = fMRIPrep MNI->T1w only (no step05c refine; baseline)
+#   C2 = refine INVERSE then MNI->T1w   (default)
+#   C3 = refine FORWARD then MNI->T1w
+CHAIN="${12:-C2}"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 for chk in "subject_list:${SUBJLIST}:f" "fmriprep_deriv:${FP_DER}:d" \
@@ -80,8 +87,9 @@ while IFS= read -r subj; do
                  | grep -v "space-MNI" | head -1)
     # fMRIPrep MNI->T1w transform
     mni2t1w=$(find "${FP_DER}/${subj}" -name "*from-MNI152NLin2009cAsym*to-T1w*xfm.h5" 2>/dev/null | head -1)
-    # step05c refining warp (use the INVERSE to map template->subject-MNI; see SCAFFOLD note)
+    # step05c refining warp — BOTH directions (which one is correct is decided by overlay)
     refine_inv=$(find "${COREG_DIR}/${subj}" -name "*brainstemRefine_*InverseWarp.nii.gz" 2>/dev/null | head -1)
+    refine_fwd=$(find "${COREG_DIR}/${subj}" -name "*brainstemRefine_*[0-9]Warp.nii.gz" 2>/dev/null | grep -v InverseWarp | head -1)
     # subject native contrast
     con=$(find "${CON_ROOT}/${subj}" -path "*/${CON_GLOB#*/}" 2>/dev/null | head -1)
     [ -z "${con}" ] && con=$(ls ${CON_ROOT}/${subj}/${CON_GLOB} 2>/dev/null | head -1)
@@ -96,19 +104,37 @@ while IFS= read -r subj; do
         echo "[FLAG] ${subj}: antsApplyTransforms missing — skipped"; fail=$((fail+1)); continue
     fi
 
-    native_atlas="${so}/${subj}_atlas-in-native.nii.gz"
-    echo "[${subj}] warp atlas MNI -> native (composed; NearestNeighbor) ..."
-    # ANTs applies -t in REVERSE: the LAST -t is applied to the point first.
-    # native -> MNI: fMRIPrep MNI->T1w xfm (used to sample); then MNI -> template:
-    # step05c inverse refine. Include refine only if present (brainstem-only refinement).
-    tx=( -t "${mni2t1w}" )
-    [ -n "${refine_inv}" ] && tx=( -t "${refine_inv}" "${tx[@]}" )
-    if antsApplyTransforms -d 3 -i "${ATLAS_MNI}" -r "${native_t1w}" \
-            "${tx[@]}" -n NearestNeighbor -o "${native_atlas}" >>"${LOG}" 2>&1; then
-        echo "   -> ${native_atlas}"
-    else
-        echo "[FLAG] ${subj}: antsApplyTransforms (atlas->native) failed (see ${LOG})"; fail=$((fail+1)); continue
+    # ── Emit ALL candidate chains so a nucleus-scale overlay can pick the right one ──
+    # (M1: the step05c refine warp is estimated in MNI space; its correct direction/order
+    #  is ambiguous on paper. ANTs applies -t in REVERSE — last -t hits the point first.)
+    declare -A CAND
+    CAND[C1]="-t ${mni2t1w}"
+    [ -n "${refine_inv}" ] && CAND[C2]="-t ${refine_inv} -t ${mni2t1w}"
+    [ -n "${refine_fwd}" ] && CAND[C3]="-t ${refine_fwd} -t ${mni2t1w}"
+    echo "[${subj}] emitting candidate atlas-in-native chains: ${!CAND[*]}"
+    for c in "${!CAND[@]}"; do
+        outc="${so}/${subj}_atlas-in-native_${c}.nii.gz"
+        # shellcheck disable=SC2086
+        if antsApplyTransforms -d 3 -i "${ATLAS_MNI}" -r "${native_t1w}" \
+                ${CAND[$c]} -n NearestNeighbor -o "${outc}" >>"${LOG}" 2>&1; then
+            echo "   -> ${c}: ${outc}"
+        else
+            echo "[FLAG] ${subj}: candidate ${c} failed (see ${LOG})"
+        fi
+    done
+
+    # Canonical atlas-in-native = the selected CHAIN (default C2); fall back if absent.
+    native_atlas="${so}/${subj}_atlas-in-native_${CHAIN}.nii.gz"
+    if [ ! -f "${native_atlas}" ]; then
+        native_atlas="${so}/${subj}_atlas-in-native_C1.nii.gz"
+        echo "[FLAG] ${subj}: chain ${CHAIN} unavailable — using C1 (no refine). Verify overlay."
     fi
+    if [ ! -f "${native_atlas}" ]; then
+        echo "[FLAG] ${subj}: no candidate atlas produced — skipped"; fail=$((fail+1)); continue
+    fi
+    cp -f "${native_atlas}" "${so}/${subj}_atlas-in-native.nii.gz"
+    native_atlas="${so}/${subj}_atlas-in-native.nii.gz"
+    echo "   -> canonical (${CHAIN}): ${native_atlas}  !!! overlay-check before trusting"
 
     # Reuse roi_extract.py for the per-nucleus extraction in native space:
     # put the subject's native con in a temp dir as <subj>.nii so roi_extract treats it

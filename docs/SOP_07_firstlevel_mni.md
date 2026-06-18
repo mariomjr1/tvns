@@ -37,6 +37,17 @@ existing con folder to MNI. Output (same names, separate folders): `con_0001.nii
 into the *same* `output_dir` from the CLI would collide (identical names) — the GUI avoids
 this by using the two route folders; from the CLI, give each space its own `output_dir`.
 
+## Statistical defaults (peer review, 2026-06-18)
+- **Serial correlations:** `cvi = FAST` (default) — better whitening than AR(1) for short-TR
+  7T data (Corbin 2018; Olszowy 2019). Switchable to `AR(1)` in the panel/`Cvi` arg. Validate
+  with a brainstem residual-ACF on pilot data.
+- **High-pass filter:** exposed (`Hpf`, default 128 s) and **checked at runtime against the
+  onsets** — the GLM **warns if HPF < 2× the longest task interval** (else the task regressor
+  is attenuated). Set it from the real paradigm timing per task.
+- **Smoothing:** cortex/whole-brain 3 mm FWHM; **brainstem ≤ 1.5 mm or none** (use the
+  optional brainstem smoothing). For ROI extraction prefer **0 mm** — ROI averaging supplies
+  the SNR; smoothing only adds partial-volume mixing across mm-scale nuclei.
+
 ## 2. Prerequisites
 - Step 02 (fMRIPrep T1w BOLD + brain mask) and Step 06 (`first_level/` inputs).
 - `utility/SubjectListBIDS.txt` (from Step 02 Part 1).

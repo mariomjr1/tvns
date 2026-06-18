@@ -126,12 +126,34 @@ def nucleus_name(path: Path, keep_lr=False) -> str:
     return name.strip("_-. ") or path.stem
 
 
-def plan_labels(files, keep_lr=False, select=None):
+def _side(path: Path) -> str:
+    """'L' / 'R' / '' from a filename side token."""
+    name = path.name
+    for e in (".nii.gz", ".nii"):
+        if name.lower().endswith(e):
+            name = name[: -len(e)]
+            break
+    if re.search(r"[._-](l|lh|left)$", name, re.I):
+        return "L"
+    if re.search(r"[._-](r|rh|right)$", name, re.I):
+        return "R"
+    return ""
+
+
+def plan_labels(files, keep_lr=False, lateralizable=None, select=None):
     """OrderedDict {nucleus_name: [files...]} preserving first-seen order.
-    `select` (list of substrings) restricts to matching nuclei (case-insensitive)."""
+    L/R are merged into one ROI EXCEPT for `lateralizable` nuclei (kept as <name>_L/_R) —
+    or all kept when keep_lr=True. `select` restricts to matching nuclei (case-insensitive).
+    Laterality matters for tVNS (ipsilateral-afferent hypothesis), so NTS/VSM + LC default
+    to kept-separate."""
+    lateralizable = lateralizable or []
     plan = OrderedDict()
     for f in files:
-        nm = nucleus_name(f, keep_lr=keep_lr)
+        base = nucleus_name(f, keep_lr=False)
+        side = _side(f)
+        keep = bool(side) and (keep_lr or
+                               any(s.lower() in base.lower() for s in lateralizable))
+        nm = f"{base}_{side}" if keep else base
         if select and not any(s.lower() in nm.lower() for s in select):
             continue
         plan.setdefault(nm, []).append(f)
@@ -169,6 +191,10 @@ def build_atlas(plan, reference, out_path, labels_out, threshold=0.35):
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     nib.save(nib.Nifti1Image(labels, ref_affine, ref.header), str(out_path))
+    # Prob-max companion (winning nucleus probability per voxel) — for probability-weighted
+    # ROI means in step10 (roi_extract --roi-weight), which reduce partial-volume bias.
+    probmax_path = str(Path(out_path).with_suffix("").with_suffix("")) + "_probmax.nii.gz"
+    nib.save(nib.Nifti1Image(maxp.astype(np.float32), ref_affine, ref.header), probmax_path)
     with open(labels_out, "w", newline="") as fcsv:
         w = csv.writer(fcsv)
         w.writerow(["value", "name", "n_voxels"])
@@ -177,6 +203,7 @@ def build_atlas(plan, reference, out_path, labels_out, threshold=0.35):
 
     n_lab = int((labels > 0).sum())
     print(f"\nWrote labeled atlas: {out_path}  ({len(names)} nuclei, {n_lab} labeled voxels)")
+    print(f"Wrote prob-max map:  {probmax_path}  (use as roi_extract --roi-weight)")
     print(f"Wrote labels CSV:    {labels_out}")
     # space-match reminder (the residual to eyeball)
     print("NOTE: atlas = ICBM152 2009b-asym 0.5mm resampled onto your MNI reference "
@@ -200,7 +227,10 @@ def main():
     ap.add_argument("--space-subdir", default="", help="force the MNI labels subfolder (relative to root)")
     ap.add_argument("--glob", default="", help="override the nucleus-file glob within the labels dir")
     ap.add_argument("--select", default="", help="comma list of nucleus name substrings to include (default all)")
-    ap.add_argument("--keep-lr", action="store_true", help="keep left/right as separate ROIs")
+    ap.add_argument("--keep-lr", action="store_true", help="keep ALL nuclei left/right as separate ROIs")
+    ap.add_argument("--lateralizable", default="VSM,LC,NTS",
+                    help="comma list of nuclei kept L/R-separate (laterality matters for tVNS); "
+                         "others merged. Default VSM,LC,NTS. Empty string = merge all.")
     ap.add_argument("--keep-skips", action="store_true", help="don't skip template/background files")
     ap.add_argument("--list", action="store_true", help="just list discovered nuclei and exit")
     a = ap.parse_args()
@@ -214,7 +244,8 @@ def main():
         raise SystemExit(f"ERROR: no nucleus NIfTIs in {label_dir} "
                          f"(try --space-subdir / --glob / --keep-skips).")
     select = [s.strip() for s in a.select.split(",") if s.strip()] or None
-    plan = plan_labels(files, keep_lr=a.keep_lr, select=select)
+    lateralizable = [s.strip() for s in a.lateralizable.split(",") if s.strip()]
+    plan = plan_labels(files, keep_lr=a.keep_lr, lateralizable=lateralizable, select=select)
 
     print(f"Labels dir: {label_dir}")
     print(f"Discovered {len(files)} file(s) -> {len(plan)} nucleus ROI(s):")

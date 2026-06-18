@@ -102,11 +102,20 @@ atlas (`brainstem_navigator_atlas.nii.gz`) + a `…_labels.csv` (value,name).
 - **CLI:** `python utility/prep_brainstem_navigator.py --atlas-root <root> --list` first to
   check what it discovered, then add `--reference <wcon> --output <atlas.nii.gz>` to build.
 - **What it picks (v1.0):** the **brainstem** MNI labels
-  (`…/1.0/2a.BrainstemNucleiAtlas_MNI/labels_probabilistic/`) — 76 files → **42 nucleus
-  ROIs** after L/R merge (LC, DR/MnR/PMnR/RMg/ROb/RPa raphe, LPB/MPB parabrachial, PAG, VTA,
-  SN, **VSM** = the medullary viscero-sensory-motor / vagal–NTS complex, …). The IIT set,
-  the diencephalic set (`2b…`), and templates are excluded by default (use `--space-subdir`
-  to override). The extra `1.0/` nesting in the download is handled automatically.
+  (`…/1.0/2a.BrainstemNucleiAtlas_MNI/labels_probabilistic/`) — 76 files → **44 nucleus
+  ROIs** (LC, DR/MnR/PMnR/RMg/ROb/RPa raphe, LPB/MPB parabrachial, PAG, VTA, SN, **VSM** =
+  the medullary viscero-sensory-motor complex, *incl. NTS + dorsal motor nucleus of vagus* —
+  phrase tVNS specificity at that resolution). The IIT set, diencephalic set (`2b…`), and
+  templates are excluded (`--space-subdir` to override); the extra `1.0/` nesting is handled.
+- **Laterality:** L/R are **kept separate for `VSM, LC, NTS`** by default (tVNS has an
+  ipsilateral-afferent hypothesis — merging would destroy it); all other nuclei merge L/R.
+  Override with `--lateralizable` / `--keep-lr`.
+- **Probability-weighted means:** the builder also writes `*_probmax.nii.gz`; pass it as
+  `roi_extract --roi-weight <…_probmax.nii.gz>` so each nucleus mean is **probability-weighted**
+  (`Σ con·p / Σ p`) — reduces partial-volume bias vs the hard 0.35 binary mean. Report a
+  binary-vs-weighted sensitivity check.
+- **Smoothing:** for ROI extraction use **0 mm** (no smoothing) brainstem contrasts; ROI
+  averaging supplies the SNR.
 - **MNI note:** the Brainstem Navigator MNI labels are **ICBM152 2009b nonlinear
   asymmetric, 0.5 mm**; fMRIPrep uses **MNI152NLin2009cAsym** (2009c asym, 1 mm) — the same
   ICBM-2009 nonlinear-asymmetric family, so resampling onto the fMRIPrep MNI grid is the
@@ -123,9 +132,13 @@ atlas (`brainstem_navigator_atlas.nii.gz`) + a `…_labels.csv` (value,name).
   or `both`.** GUI: RoiPanel "Native-space nuclei ROIs (step10b)" sub-frame/button — its
   **native con root defaults to `derivatives/spm/first_level_t1w`** (the native route) and
   output to `derivatives/spm/roi/brainstem_native`.
-  **SCAFFOLD:** verify the atlas-in-native overlay on the cluster before trusting the
-  numbers (the transform direction/order must be confirmed there). The **QC snapshots**
-  tool now renders an `atlas_native` montage so you can eyeball this placement.
+  **SCAFFOLD:** the transform composition is ambiguous on paper, so step10b **emits all
+  candidate chains** — `C1` (no refine), `C2` (refine-inverse, default), `C3` (refine-forward)
+  — as `<subj>_atlas-in-native_C{1,2,3}.nii.gz`. **Overlay each at nucleus scale** (VSM on the
+  dorsomedial medulla/obex; LC on the 4th-ventricle floor), pick the correct one, and set the
+  **Transform chain** selector (or the `chain` arg) — the canonical `*_atlas-in-native.nii.gz`
+  + extraction use it. The **QC snapshots** `atlas_native` montage helps eyeball this. A wrong
+  chain still looks plausible, so judge by nucleus anatomy, not "is it in the brainstem."
 
 ## 7. Troubleshooting
 | Symptom | Cause / fix |
