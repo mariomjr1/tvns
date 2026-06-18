@@ -404,7 +404,24 @@ def main():
     if not all_records:
         print("[platform] nothing to report.")
         return
-    write_cohort(out_dir, all_records, args.imbalance)
+    summ = write_cohort(out_dir, all_records, args.imbalance)
+    # Record the platform-covariate methodology decision (balanced -> DROP the covariate).
+    try:
+        import sys as _sys, os as _os
+        _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+        import decision_report as _D
+        nflags = summ.get("imbalance_flags", 0)
+        if nflags:
+            _D.write_decision(out_dir, "platform_covariate", "KEEP",
+                              f"group×platform imbalance flagged ({nflags}) — add a platform "
+                              f"covariate or stratify.",
+                              metrics={"imbalance_flags": nflags, "subjects": summ.get("subjects")})
+        else:
+            _D.write_decision(out_dir, "platform_covariate", "DROP",
+                              "platform balanced across groups — covariate unnecessary (Task 33).",
+                              metrics={"imbalance_flags": 0, "subjects": summ.get("subjects")})
+    except Exception as _exc:  # noqa: BLE001
+        print(f"[platform] WARN decision not recorded: {_exc}")
     print("[platform] Done.")  # always exit 0
 
 

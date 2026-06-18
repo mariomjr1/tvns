@@ -98,6 +98,29 @@ Every check cell is **`OK`** / **`FLAG…`** / **`NA`** (source not produced yet
 | Everything `REVIEW` | Check `--fd-mean-thresh` isn't too low; review the dominant flagged column. |
 | GUI table empty | Click **↻ Generate / Refresh QC digest** (or set `sourcedata` in Setup). |
 
+## 9. Methodology decision reports — read one file, decide what to keep
+Separately from the per-subject QC digest, the **validation steps each emit a "decision"**
+(verdict + numbers + recommendation) so you can judge whether each methodology choice is
+worth keeping. Each writes `codes/qc/decisions/<name>.json` (+ a human `*_report.md`), and
+**`utility/methodology_report.py`** rolls them into one **`codes/qc/methodology_decisions.md`**
+(GUI: QC panel → **▶ Methodology decisions report**).
+
+Verdicts: **KEEP** (evidence supports it) · **DROP** (not worth it) · **REVIEW** (needs a
+human look) · **PENDING** (not run yet — the row shows the command to produce it).
+
+| decision | produced by | KEEP means |
+|---|---|---|
+| RETROICOR-before vs physio-in-GLM | `brainstem_physio_metrics.py --compare corrected.csv conventional.csv` | brainstem tSNR ↑ and cardiac-band power ↓ |
+| step05c brainstem refinement | `coreg_dice_report.py` (Dice before vs after) | mean brainstem Dice improves ≥ threshold |
+| step10b transform chain (C1/C2/C3) | `chain_report.py` (+ `overlay_atlas_native.py`) | (REVIEW) highest-overlap chain, confirmed by nucleus anatomy |
+| 2009b↔2009c residual | `measure_template_residual.py --qc-dir …` | median residual ≤ 0.5 mm → resample-only OK |
+| platform covariate | `audit_platform.py --all` | (DROP if balanced) covariate unnecessary |
+| FAST vs AR(1) | residual-ACF on pilot (Task 17) | FAST whitens the brainstem residual better |
+
+Run the validation steps on the pilots, then generate the methodology report and read the
+table: KEEP/DROP tells you which parts of the Methods to keep; REVIEW/PENDING tells you what
+still needs a look or a run.
+
 ## 8. Next step
 This is the final QC gate. Review every `REVIEW` subject, then proceed to your statistics /
 figures. See [`_start_here.md`](_start_here.md) §H for where this fits in the workflow.

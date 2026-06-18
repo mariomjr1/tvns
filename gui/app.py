@@ -2469,6 +2469,9 @@ class QCPanel(ttk.Frame):
         self._digest_btn = ttk.Button(dgr, text="↻ Generate / Refresh QC digest",
                                       command=self._run_digest)
         self._digest_btn.pack(side="left")
+        self._methods_btn = ttk.Button(dgr, text="▶ Methodology decisions report",
+                                       command=self._run_methods_report)
+        self._methods_btn.pack(side="left", padx=(8, 0))
         self._digest_lbl = ttk.Label(dgr, foreground="#6a6a6a", text="(not yet generated)")
         self._digest_lbl.pack(side="left", padx=(10, 0))
         ttk.Label(dg, foreground="gray", wraplength=620,
@@ -2862,6 +2865,31 @@ class QCPanel(ttk.Frame):
             self._status.set(f"QC digest failed (exit {rc})")
             self._console.append(f"[qc_digest] failed (exit {rc}).", "error")
         self._load_digest()
+
+    def _run_methods_report(self):
+        """Aggregate the recorded methodology decisions into one report (read & decide)."""
+        script = SCRIPTS_ROOT / "utility" / "methodology_report.py"
+        if not script.is_file():
+            messagebox.showerror("Error", f"Not found:\n{script}"); return
+        qd = self._qc_dir()
+        if qd is None:
+            messagebox.showerror("Error", "Set the project root / sourcedata in Setup."); return
+        py = self._cfg.get("python_exe", tk.StringVar()).get().strip() or "python3"
+        cmd = [py, str(script), "--qc-dir", str(qd)]
+        self._console.separator()
+        self._console.append("[methodology] aggregating decision reports…", "info")
+        self._methods_btn.config(state="disabled"); self._progress.start(10)
+
+        def _done(rc):
+            self._progress.stop(); self._methods_btn.config(state="normal")
+            md = qd / "methodology_decisions.md"
+            if rc == 0:
+                self._status.set("Methodology report ready ✓")
+                self._console.append(f"[methodology] read {md} (per-decision KEEP/DROP/REVIEW/PENDING).", "ok")
+            else:
+                self._console.append(f"[methodology] failed (exit {rc}).", "error")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append, on_done=_done)
 
     def _load_digest(self):
         """Load codes/qc/qc_digest.csv into the digest table (color by status)."""

@@ -21,16 +21,78 @@ import csv
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import decision_report as _D   # noqa: E402
+
+
+def _mean_col(rows, startswith):
+    vals = []
+    for r in rows:
+        for k, v in r.items():
+            if k.startswith(startswith):
+                try:
+                    vals.append(float(v))
+                except (TypeError, ValueError):
+                    pass
+    return (sum(vals) / len(vals)) if vals else float("nan")
+
+
+def compare_verdict(corr_rows, conv_rows):
+    """RETROICOR-before vs conventional. Returns (verdict, message, metrics). Pure stdlib."""
+    t_c = _mean_col(corr_rows, "tsnr"); t_k = _mean_col(conv_rows, "tsnr")
+    f_c = _mean_col(corr_rows, "cardiac_frac"); f_k = _mean_col(conv_rows, "cardiac_frac")
+    metrics = {"tsnr_corrected": round(t_c, 2), "tsnr_conventional": round(t_k, 2),
+               "cardiac_corrected": round(f_c, 4), "cardiac_conventional": round(f_k, 4)}
+    if any(x != x for x in (t_c, t_k, f_c, f_k)):
+        return "PENDING", "incomplete metrics — run brainstem_physio_metrics.py on both flows", metrics
+    tsnr_up = t_c > t_k
+    card_down = f_c < f_k
+    if card_down and tsnr_up:
+        return "KEEP", (f"RETROICOR-before raises brainstem tSNR ({t_k:.1f}->{t_c:.1f}) and lowers "
+                        f"cardiac-band power ({f_k:.3f}->{f_c:.3f}) — keep the before-fMRIPrep order."), metrics
+    if not card_down and not tsnr_up:
+        return "DROP", (f"RETROICOR-before does NOT help (tSNR {t_k:.1f}->{t_c:.1f}, cardiac "
+                        f"{f_k:.3f}->{f_c:.3f}) — reconsider vs physio-in-GLM."), metrics
+    return "REVIEW", (f"Mixed: tSNR {t_k:.1f}->{t_c:.1f}, cardiac {f_k:.3f}->{f_c:.3f} — "
+                      f"inspect per-run before deciding."), metrics
+
 
 def main():
     ap = argparse.ArgumentParser(description="Brainstem tSNR + cardiac-band power of a BOLD run")
-    ap.add_argument("--bold", required=True, help="4D BOLD NIfTI")
-    ap.add_argument("--mask", required=True, help="brainstem mask NIfTI (same grid as BOLD)")
-    ap.add_argument("--tr", type=float, required=True, help="repetition time (s)")
+    ap.add_argument("--bold", default="", help="4D BOLD NIfTI")
+    ap.add_argument("--mask", default="", help="brainstem mask NIfTI (same grid as BOLD)")
+    ap.add_argument("--tr", type=float, default=None, help="repetition time (s)")
     ap.add_argument("--card-band", nargs=2, type=float, default=[0.8, 1.5], help="cardiac band (Hz)")
     ap.add_argument("--label", default="", help="label for the CSV row (e.g. corrected/conventional)")
     ap.add_argument("--out", default="", help="append a row to this CSV (optional)")
+    ap.add_argument("--compare", nargs=2, metavar=("CORRECTED_CSV", "CONVENTIONAL_CSV"),
+                    default=None, help="compare two metric CSVs -> RETROICOR-order decision report")
+    ap.add_argument("--qc-dir", default="", help="record the retroicor_before decision here")
+    ap.add_argument("--report", default="", help="markdown report path (compare mode)")
     a = ap.parse_args()
+
+    # ── Compare mode: read two metric CSVs and decide (stdlib, no nibabel) ───────
+    if a.compare:
+        corr = list(csv.DictReader(open(a.compare[0]))) if os.path.isfile(a.compare[0]) else []
+        conv = list(csv.DictReader(open(a.compare[1]))) if os.path.isfile(a.compare[1]) else []
+        verdict, msg, metrics = compare_verdict(corr, conv)
+        rep = a.report or (os.path.join(a.qc_dir, "physio_order_report.md") if a.qc_dir
+                           else "physio_order_report.md")
+        os.makedirs(os.path.dirname(os.path.abspath(rep)), exist_ok=True)
+        with open(rep, "w") as f:
+            f.write("# RETROICOR-before vs conventional (brainstem)\n\n")
+            f.write(f"**Verdict: {verdict}** — {msg}\n\n")
+            f.write("| metric | corrected | conventional |\n|---|---|---|\n")
+            f.write(f"| brainstem tSNR (median) | {metrics['tsnr_corrected']} | {metrics['tsnr_conventional']} |\n")
+            f.write(f"| cardiac-band power frac | {metrics['cardiac_corrected']} | {metrics['cardiac_conventional']} |\n")
+        if a.qc_dir:
+            _D.write_decision(a.qc_dir, "retroicor_before", verdict, msg, metrics=metrics)
+        print(f"[physio-compare] {verdict}: {msg}\n[physio-compare] wrote {rep}")
+        return 0
+
+    if not (a.bold and a.mask and a.tr):
+        print("[physio-metrics] need --bold --mask --tr (or --compare A B)", file=sys.stderr)
+        return 1
 
     try:
         import numpy as np

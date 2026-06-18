@@ -546,6 +546,14 @@ subjects: **[SOP 11 — QC digest](SOP_11_qc_digest.md)**.
 **Habit:** after a big step, run the relevant audit; before trusting results, **Generate the
 QC digest** and review every `REVIEW` subject. Capture **provenance once per batch** first.
 
+### Methodology decisions report (read one file, decide what to keep)
+The validation steps each record a **decision** (KEEP / DROP / REVIEW / PENDING + numbers).
+QC panel → **▶ Methodology decisions report** rolls them into one
+**`codes/qc/methodology_decisions.md`** — read it to decide which methodology choices are
+worth keeping (RETROICOR-before, step05c refinement, the step10b chain, 2009b↔2009c residual,
+platform covariate, FAST vs AR(1)). PENDING rows show the command to produce the evidence.
+See [SOP 11 §9](SOP_11_qc_digest.md).
+
 ---
 
 ## I. The flag-and-log rule

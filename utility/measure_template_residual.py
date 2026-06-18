@@ -33,6 +33,10 @@ Created by Mario Murakami
 """
 
 import argparse
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import decision_report as _D   # noqa: E402
 import shutil
 import subprocess
 import sys
@@ -191,7 +195,13 @@ def main():
                          f"(default {DEFAULT_OK_THRESHOLD_MM})")
     ap.add_argument("--discover-only", action="store_true",
                     help="just resolve + report the three inputs and exit (no ANTs/nibabel)")
+    ap.add_argument("--qc-dir", default="", help="also record a methodology decision here")
     args = ap.parse_args()
+
+    def _record(verdict, message, metrics=None):
+        if args.qc_dir:
+            v = {"RESAMPLE_OK": "KEEP", "ADD_WARP": "REVIEW"}.get(verdict, "PENDING")
+            _D.write_decision(args.qc_dir, "template_residual", v, message, metrics=metrics)
 
     ok, info = discover_inputs(args.template_2009b, args.reference_2009c,
                                args.brainstem_mask)
@@ -201,6 +211,7 @@ def main():
     if not ok:
         print("[residual] one or more inputs missing — cannot proceed. "
               "(Discovery done; nothing computed.)", file=sys.stderr)
+        _record(None, "inputs missing — run measure_template_residual.py on the cluster")
         # flag + log + continue: still exit 0
         return
     if args.discover_only:
@@ -217,6 +228,7 @@ def main():
 
     verdict, message = recommend(median_mm, p95_mm, threshold=args.ok_threshold)
     rep = write_report(args.out, info, median_mm, p95_mm, verdict, message)
+    _record(verdict, message, metrics={"median_mm": median_mm, "p95_mm": p95_mm})
     print(f"\n[residual] VERDICT: {verdict}")
     print(f"[residual] {message}")
     print(f"[residual] Wrote {rep}")
