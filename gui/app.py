@@ -5481,6 +5481,10 @@ class RoiPanel(ttk.Frame):
         self._roiatlas_var = cfg["brainstem_atlas"]  # labeled atlas (set once in Setup)
         self._roilabels_var = tk.StringVar() # atlas label values
         self._roinames_var  = tk.StringVar() # atlas label names
+        # Brainstem Navigator builder: point at the v1.0 root -> labeled atlas on MNI grid
+        self._bn_root_var = tk.StringVar()
+        self._bn_ref_var  = tk.StringVar()
+        self._bn_thr_var  = tk.StringVar(value="0.35")
         # Native-space nuclei ROIs via step05c composed warp (step10b) — defaults to
         # the native/T1w first-level route (first_level_t1w) and the spm/roi output.
         _sd0 = cfg["sourcedata"].get().strip()
@@ -5568,6 +5572,28 @@ class RoiPanel(ttk.Frame):
                         "Labeled atlas + label values (+ optional names) → one mean column per "
                         "nucleus. Leave X/Y/Z empty to run these alone.")).pack(anchor="w")
 
+        # ── Build the labeled atlas from a Brainstem Navigator v1.0 download ──────
+        bn = ttk.LabelFrame(self, text="Build atlas from Brainstem Navigator v1.0 (per-nucleus β)",
+                            padding=(10, 6))
+        bn.pack(fill="x", pady=(0, 8))
+        ttk.Label(bn, foreground="gray", wraplength=560,
+                  text=("Point at the unzipped Brainstem Navigator v1.0 ROOT. It finds the MNI "
+                        "per-nucleus labels, merges L/R, thresholds, and resamples onto your MNI "
+                        "reference grid → one labeled atlas + a labels list, which auto-fill the "
+                        "'Labeled atlas / Labels / Names' above. Reference = a wcon (or fMRIPrep "
+                        "MNI BOLD). Atlas is ICBM 2009b-asym 0.5mm → your 2009cAsym grid; "
+                        "verify the overlay.")).pack(anchor="w", pady=(0, 4))
+        PathRow(bn, "Brainstem Navigator root:", mode="dir",
+                var=self._bn_root_var, label_width=24).pack(fill="x", pady=2)
+        PathRow(bn, "MNI reference (wcon/BOLD):", mode="file",
+                filetypes=[("NIfTI", "*.nii *.nii.gz"), ("All", "*.*")],
+                var=self._bn_ref_var, label_width=24).pack(fill="x", pady=2)
+        bnr = ttk.Frame(bn); bnr.pack(fill="x", pady=2)
+        ttk.Label(bnr, text="Threshold (prob):").pack(side="left")
+        ttk.Entry(bnr, textvariable=self._bn_thr_var, width=6).pack(side="left", padx=(4, 12))
+        self._bn_btn = ttk.Button(bnr, text="▶ Build atlas from root", command=self._build_bn_atlas)
+        self._bn_btn.pack(side="left")
+
         # Native-space nuclei ROIs (uses the step05c refinement; step10b)
         nf = ttk.LabelFrame(self, text="Native-space nuclei ROIs (atlas via step05c composed warp)",
                             padding=(10, 6))
@@ -5647,6 +5673,60 @@ class RoiPanel(ttk.Frame):
         else:
             self._status.set(f"Step 10 failed (exit {rc})")
             self._console.append(f"[Step 10] Failed (exit {rc}).", "error")
+
+    def _build_bn_atlas(self):
+        """Build a labeled atlas from a Brainstem Navigator v1.0 root, on the MNI grid."""
+        script = SCRIPTS_ROOT / "utility" / "prep_brainstem_navigator.py"
+        if not script.is_file():
+            messagebox.showerror("Error", f"Not found:\n{script}"); return
+        root = self._bn_root_var.get().strip()
+        if not root or not os.path.isdir(root):
+            messagebox.showerror("Error", "Point 'Brainstem Navigator root' at the unzipped v1.0 folder."); return
+        ref = self._bn_ref_var.get().strip()
+        if not ref:                                  # fall back to the first wcon in the wcon dir
+            wd = self._wcon_var.get().strip()
+            if wd and os.path.isdir(wd):
+                hits = sorted(Path(wd).glob("*.nii")) + sorted(Path(wd).glob("*.nii.gz"))
+                ref = str(hits[0]) if hits else ""
+        if not ref or not os.path.isfile(ref):
+            messagebox.showerror("Error", "Set an MNI reference NIfTI (a wcon or fMRIPrep MNI BOLD)."); return
+        sd = self._cfg["sourcedata"].get().strip()
+        out = (str(Path(sd) / "derivatives" / "brainstem" / "brainstem_navigator_atlas.nii.gz")
+               if sd else str(Path(root) / "brainstem_navigator_atlas.nii.gz"))
+        self._bn_out = out
+        self._bn_labels = str(Path(out).with_suffix("").with_suffix("")) + "_labels.csv"
+        py = self._cfg.get("python_exe", tk.StringVar()).get().strip() or "python3"
+        cmd = [py, str(script), "--atlas-root", root, "--reference", ref,
+               "--output", out, "--labels-out", self._bn_labels,
+               "--threshold", self._bn_thr_var.get().strip() or "0.35"]
+        self._console.separator()
+        self._console.append("[brainstem-navigator] building labeled atlas on the MNI grid…", "info")
+        self._bn_btn.config(state="disabled"); self._progress.start(10)
+        self._status.set("Building Brainstem Navigator atlas…")
+        self._runner.run(cmd=cmd, cwd=str(SCRIPTS_ROOT),
+                         on_line=self._console.append, on_done=self._bn_done)
+
+    def _bn_done(self, rc):
+        self._progress.stop(); self._bn_btn.config(state="normal")
+        if rc != 0:
+            self._status.set(f"Atlas build failed (exit {rc})")
+            self._console.append(f"[brainstem-navigator] failed (exit {rc}).", "error")
+            return
+        # Point the Labeled-atlas field (shared cfg var) + fill labels/names from the CSV
+        self._cfg["brainstem_atlas"].set(self._bn_out)
+        try:
+            vals, names = [], []
+            with open(self._bn_labels, newline="") as f:
+                for row in csv.DictReader(f):
+                    vals.append(str(row.get("value", "")).strip())
+                    names.append(str(row.get("name", "")).strip())
+            self._roilabels_var.set(" ".join(v for v in vals if v))
+            self._roinames_var.set(" ".join(n for n in names if n))
+            self._console.append(f"[brainstem-navigator] {len(vals)} nuclei → atlas + labels filled. "
+                                 "Run 'Step 10 — Extract' for per-nucleus β.", "ok")
+        except Exception as exc:  # noqa: BLE001
+            self._console.append(f"[brainstem-navigator] atlas built; could not read labels CSV: {exc}", "warn")
+        self._status.set("Brainstem Navigator atlas ready ✓")
 
     def _run_native_roi(self):
         """step10b: warp the atlas to native via step05c composed warp, extract nuclei."""

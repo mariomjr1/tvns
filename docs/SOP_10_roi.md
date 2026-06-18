@@ -88,12 +88,28 @@ bash step10_ROI.sh -6 -40 -20 \
   silently places the ROI in the wrong location.
 
 ## 6b. Brainstem-nuclei ROIs (atlas + native-space step10b)
-For named brainstem nuclei (NTS/LC/raphe), use a labeled atlas instead of spheres:
-- **Direct (MNI) — works now:** set **`brainstem_atlas`** in Setup (a labeled NIfTI,
-  e.g. Brainstem Navigator, in MNI). The step10 ROI panel's "Labeled atlas" field is
-  bound to it; add the label values/names → one mean column per nucleus. With the
-  default MNI first level (Task 22) the atlas aligns to the `wcon` images by grid
-  resampling.
+For named brainstem nuclei (NTS/LC/raphe), use a labeled atlas instead of spheres.
+
+**Build the labeled atlas from a Brainstem Navigator v1.0 download** (`utility/prep_brainstem_navigator.py`):
+point it at the **unzipped v1.0 root** + an **MNI reference** (a `wcon_*.nii` or fMRIPrep
+MNI BOLD). It finds the toolkit's **MNI** per-nucleus labels, merges L/R, thresholds
+(`--threshold`, default 0.35), and **resamples onto your reference grid** → one labeled
+atlas (`brainstem_navigator_atlas.nii.gz`) + a `…_labels.csv` (value,name).
+- **GUI:** step 10 panel → *"Build atlas from Brainstem Navigator v1.0"* → set the root +
+  reference → **▶ Build atlas from root**. On success it sets `brainstem_atlas` and
+  **auto-fills the Labeled atlas / Labels / Names** fields; then **▶ Run Step 10 — Extract**
+  gives one mean **β (contrast)** column per nucleus per subject.
+- **CLI:** `python utility/prep_brainstem_navigator.py --atlas-root <root> --list` first to
+  check what it discovered, then add `--reference <wcon> --output <atlas.nii.gz>` to build.
+- **MNI note:** the Brainstem Navigator MNI labels are **ICBM152 2009b nonlinear
+  asymmetric, 0.5 mm**; fMRIPrep uses **MNI152NLin2009cAsym** (2009c asym, 1 mm) — the same
+  ICBM-2009 nonlinear-asymmetric family, so resampling onto the fMRIPrep MNI grid is the
+  correct operation (no template warp). **Verify the atlas-on-wcon overlay** (sub-mm residual).
+
+- **Direct (MNI) — works now:** set **`brainstem_atlas`** in Setup (the labeled NIfTI built
+  above, in MNI). The step10 ROI panel's "Labeled atlas" field is bound to it; add the label
+  values/names → one mean column per nucleus. With the default MNI first level (Task 22) the
+  atlas aligns to the `wcon` images by grid resampling.
 - **Native space (uses step05c) — `step10b_atlas_native_roi_v2.sh`:** warps the atlas
   into each subject's native T1w space via the composed transform (fMRIPrep MNI→T1w ∘
   step05c refine), then extracts per-nucleus means from the native (T1w-space)

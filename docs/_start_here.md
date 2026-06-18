@@ -658,6 +658,34 @@ A first full run, in order (✅ each before moving on):
 
 ---
 
+## Appendix A — Getting & building the brainstem atlas
+
+The brainstem nuclei (NTS/LC/raphe…) need a labeled atlas. Recommended: the **Brainstem
+Navigator** (Bianciardi lab, 7T).
+
+**1. Download** (one-time): https://www.nitrc.org/projects/brainstemnavig/ → Downloads →
+`BrainstemNavigatorv1.0.zip` (make a free NITRC account, accept terms, cite the papers).
+Unzip onto the cluster *with your data* (not in the repo), e.g. `…/atlases/BrainstemNavigatorv1.0/`.
+
+**2. Build the labeled atlas** (turns the toolkit into one atlas on your MNI grid):
+- GUI: **step 10 panel → "Build atlas from Brainstem Navigator v1.0"** → set the **root**
+  + an **MNI reference** (a `wcon_*.nii` or fMRIPrep MNI BOLD) → **▶ Build atlas from root**.
+  It auto-fills the Labeled atlas / Labels / Names, then **Run Step 10 — Extract** gives one
+  mean **β** per nucleus per subject.
+- CLI: `python utility/prep_brainstem_navigator.py --atlas-root <root> --list` (check what it
+  found) then add `--reference <wcon> --output <atlas.nii.gz>` to build.
+
+**3. MNI match (important).** The Brainstem Navigator MNI labels are **ICBM152 2009b
+nonlinear asymmetric, 0.5 mm**; this pipeline's fMRIPrep MNI is **MNI152NLin2009cAsym**
+(2009c asym, 1 mm) — same ICBM-2009 nonlinear-asymmetric family, so the builder **resamples
+onto your MNI reference grid** (no template warp). This is also what the step10b registration
+warp expects. **Always eyeball the atlas-on-wcon / atlas-in-native overlay** (the `atlas_native`
+QC snapshot) before trusting the numbers — the residual is sub-millimetre but should be checked.
+
+See [SOP 10 §6b](SOP_10_roi.md#6b-brainstem-nuclei-rois-atlas--native-space-step10b) for details.
+
+---
+
 *This is the complete operator's manual. For exact commands, parameters, and outputs of each
 step, see the numbered SOPs (00–10) in this folder; for the scientific Methods, see
 `methodology.md`. Pipeline created by Mario Murakami.*
