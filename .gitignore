@@ -22,6 +22,9 @@ methodology.md
 # Tests — local-only (mock harness + generated report/eval images)
 tests/
 
+# Brainstem Navigator atlas download — large + licensed; keep local, never commit
+utility/BrainstemNavigatorv1.0/
+
 # Agent tasks and Claude config
 agents/
 .claude/

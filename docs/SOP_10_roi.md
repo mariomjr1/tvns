@@ -101,6 +101,12 @@ atlas (`brainstem_navigator_atlas.nii.gz`) + a `…_labels.csv` (value,name).
   gives one mean **β (contrast)** column per nucleus per subject.
 - **CLI:** `python utility/prep_brainstem_navigator.py --atlas-root <root> --list` first to
   check what it discovered, then add `--reference <wcon> --output <atlas.nii.gz>` to build.
+- **What it picks (v1.0):** the **brainstem** MNI labels
+  (`…/1.0/2a.BrainstemNucleiAtlas_MNI/labels_probabilistic/`) — 76 files → **42 nucleus
+  ROIs** after L/R merge (LC, DR/MnR/PMnR/RMg/ROb/RPa raphe, LPB/MPB parabrachial, PAG, VTA,
+  SN, **VSM** = the medullary viscero-sensory-motor / vagal–NTS complex, …). The IIT set,
+  the diencephalic set (`2b…`), and templates are excluded by default (use `--space-subdir`
+  to override). The extra `1.0/` nesting in the download is handled automatically.
 - **MNI note:** the Brainstem Navigator MNI labels are **ICBM152 2009b nonlinear
   asymmetric, 0.5 mm**; fMRIPrep uses **MNI152NLin2009cAsym** (2009c asym, 1 mm) — the same
   ICBM-2009 nonlinear-asymmetric family, so resampling onto the fMRIPrep MNI grid is the

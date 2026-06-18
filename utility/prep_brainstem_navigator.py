@@ -77,6 +77,16 @@ def discover_label_dir(root: Path, space_subdir: str = "") -> Path:
             score -= 2000
         if any(t in path_l for t in ("label", "atlas", "prob", "nuclei", "roi")):
             score += 200
+        # Brainstem Navigator layout: prefer the BRAINSTEM nuclei + the RAW probabilistic
+        # labels (so our own threshold + highest-probability overlap resolution apply).
+        if "brainstemnucleiatlas" in path_l:
+            score += 400
+        if path_l.rstrip("/").endswith("labels_probabilistic"):
+            score += 500
+        elif "thresholded_probabilistic" in path_l:
+            score += 100
+        elif "binary" in path_l:
+            score += 50
         cands.append((score, n, d))
     if not cands:
         raise SystemExit(f"ERROR: no NIfTI files found anywhere under {root}")
