@@ -47,6 +47,10 @@ this by using the two route folders; from the CLI, give each space its own `outp
 - **Smoothing:** cortex/whole-brain 3 mm FWHM; **brainstem ≤ 1.5 mm or none** (use the
   optional brainstem smoothing). For ROI extraction prefer **0 mm** — ROI averaging supplies
   the SNR; smoothing only adds partial-volume mixing across mm-scale nuclei.
+- **PSC (percent signal change):** the GLM also writes **`pscon_0001.nii`** (and `wpscon_*`
+  in MNI) = the contrast scaled to %ΔBOLD (`100·con·peak / session-mean β`). **Use PSC as the
+  primary ROI currency** — interpretable and robust to the E12↔XA60 console scaling change;
+  point step 10 / step10b at `pscon_*`/`wpscon_*` and keep β (`con_*`) as supplementary.
 
 ## 2. Prerequisites
 - Step 02 (fMRIPrep T1w BOLD + brain mask) and Step 06 (`first_level/` inputs).

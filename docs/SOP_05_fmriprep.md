@@ -121,7 +121,19 @@ buttons (require **FreeSurfer ≥ 8.1** in Setup; ANTs for 05c). Flag + log + co
   cost-function-masked ANTs SyN driven by the 05b mask that refines brainstem
   alignment (this *is* the co-registration improvement). Consumed by step10b.
   **SCAFFOLD:** confirm ANTs params + fMRIPrep transform filenames on the cluster and
-  verify an atlas-in-native overlay before trusting brainstem ROIs.
+  verify an atlas-in-native overlay before trusting brainstem ROIs. It writes a
+  **`<subj>_brainstem_coreg_qc.csv`** (Jacobian min/max + status — flags folding/distortion).
+
+### Validation & audit helpers (peer review)
+- **`utility/overlay_atlas_native.py`** — montage of the step10b `C1/C2/C3` atlas-in-native
+  candidates over the subject T1w → pick the correct transform chain by nucleus anatomy.
+- **`utility/brainstem_physio_metrics.py`** — brainstem-mask tSNR + cardiac-band power of a
+  BOLD run → run on corrected vs conventional for the Task-12 physio-order pilot.
+- **`utility/measure_template_residual.py`** — measures the ICBM 2009b↔2009c brainstem
+  residual (mm) and recommends resample-only vs adding a template→template warp.
+- **`utility/audit_platform.py`** — per-run E12/XA60 console inference + the **group×platform
+  contingency table** + per-platform tSNR/FD → `codes/qc/group_platform_audit.{csv,md}`
+  (settles the Task-33 platform-confound question; audit-only, never blocks).
 
 ## 9. Troubleshooting
 | Symptom | Cause / fix |

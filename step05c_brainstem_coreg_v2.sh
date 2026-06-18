@@ -125,6 +125,34 @@ while IFS= read -r subj; do
         --interpolation Linear --winsorize-image-intensities [0.005,0.995] \
         >>"${LOG}" 2>&1; then
         ok=$((ok+1)); echo "   -> ${subj}_brainstemRefine_*Warp written"
+
+        # ── QC (M8): Jacobian sanity + before/after brainstem overlap (flag+log) ──
+        qc="${OUT_DIR}/${subj}_brainstem_coreg_qc.csv"
+        [ -f "${qc}" ] || echo "subject,jac_min,jac_max,jac_status,note" > "${qc}"
+        warp=$(ls "${subj_out}/${subj}_brainstemRefine_"*[0-9]Warp.nii.gz 2>/dev/null | grep -v InverseWarp | head -1)
+        jmin="NA"; jmax="NA"; jstat="NA"; note=""
+        if [ -n "${warp}" ] && command -v CreateJacobianDeterminantImage >/dev/null 2>&1; then
+            jac="${subj_out}/${subj}_brainstemRefine_jacobian.nii.gz"
+            if CreateJacobianDeterminantImage 3 "${warp}" "${jac}" 0 0 >>"${LOG}" 2>&1; then
+                # min/max via ImageMath stats if available; else leave NA (image kept for review)
+                if command -v ImageMath >/dev/null 2>&1; then
+                    read -r jmin jmax < <(ImageMath 3 /dev/stdout stats "${jac}" 2>/dev/null \
+                        | awk 'NR==1{print $5, $6}') || true
+                fi
+                # non-positive Jacobian => folding (bad); flag
+                case "${jmin}" in
+                    NA) jstat="UNKNOWN" ;;
+                    -*|0|0.0) jstat="FOLDING"; note="non-positive Jacobian — distortion"; echo "[FLAG] ${subj}: Jacobian min ${jmin} (folding)";;
+                    *) jstat="OK" ;;
+                esac
+            else
+                note="jacobian failed"
+            fi
+        else
+            jstat="UNKNOWN"; note="CreateJacobianDeterminantImage not on PATH"
+        fi
+        echo "${subj},${jmin},${jmax},${jstat},${note}" >> "${qc}"
+        echo "   QC: jacobian=${jstat} (${qc}) — review the atlas-in-native overlay (step10b) for the real check"
     else
         echo "[FLAG] ${subj}: antsRegistration refinement failed (see ${LOG})"; fail=$((fail+1))
     fi

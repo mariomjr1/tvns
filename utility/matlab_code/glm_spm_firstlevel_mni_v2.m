@@ -400,10 +400,14 @@ function run_one_glm(space_entity, out_dir, do_warp, subj, ses, task, run, func_
     spm_jobman('run', mb);
     fprintf('First-level done: %s | %s | space-%s\n', subj, task, space_entity);
 
+    % ── Percent signal change (PSC) image(s) — primary, platform-robust ──────────
+    write_psc(out_dir, spm_mat);
+
     % ── MNI handling ────────────────────────────────────────────────────────────
     if is_mni
-        % con already in MNI → copy to wcon_*.nii for the group step (no warp)
-        cons = dir(fullfile(out_dir, 'con_*.nii'));
+        % con already in MNI → copy to wcon_*.nii for the group step (no warp).
+        % Include pscon_* so wpscon_* (PSC in MNI) is available too.
+        cons = [dir(fullfile(out_dir, 'con_*.nii')); dir(fullfile(out_dir, 'pscon_*.nii'))];
         for c = 1:numel(cons)
             copyfile(fullfile(out_dir, cons(c).name), ...
                      fullfile(out_dir, ['w' cons(c).name]));
@@ -414,9 +418,51 @@ function run_one_glm(space_entity, out_dir, do_warp, subj, ses, task, run, func_
         if isempty(t1_gz)
             warning('No T1w for MNI warp (skip warp): %s', subj);
         else
-            con_files = dir(fullfile(out_dir, 'con_*.nii'));
+            con_files = [dir(fullfile(out_dir, 'con_*.nii')); ...
+                         dir(fullfile(out_dir, 'pscon_*.nii'))];
             warp_cons_to_mni(t1_gz, {con_files.name}, out_dir, mni_ref, spm_dir, workdir);
         end
+    end
+end
+
+
+% ── Percent signal change (PSC) images ────────────────────────────────────────
+% PSC = 100 * con * peak(Stim regressor) / session-mean beta  (Mazaika/marsbar event-
+% height scaling). PSC is interpretable and robust to between-platform scaling
+% (E12<->XA60), so it is the preferred ROI currency; beta stays available too.
+% Flag + log: warns and returns on any problem, never aborts the GLM.
+function write_psc(out_dir, spm_mat)
+    try
+        L = load(spm_mat); SPM = L.SPM;
+        if ~isfield(SPM, 'Sess') || isempty(SPM.Sess) || isempty(SPM.Sess(1).col)
+            warning('[PSC] no session columns in SPM — skipped'); return;
+        end
+        stim_col = SPM.Sess(1).col(1);                 % first condition (Stim)
+        peak = max(SPM.xX.X(:, stim_col));             % HRF-convolved regressor peak
+        if ~isfinite(peak) || peak <= 0
+            warning('[PSC] non-positive regressor peak — skipped'); return;
+        end
+        if ~isfield(SPM.xX, 'iB') || isempty(SPM.xX.iB)
+            warning('[PSC] no constant/session-mean term — skipped'); return;
+        end
+        bfile = fullfile(out_dir, sprintf('beta_%04d.nii', SPM.xX.iB(1)));
+        if exist(bfile, 'file') ~= 2
+            warning('[PSC] constant beta not found (%s) — skipped', bfile); return;
+        end
+        mean_img = spm_read_vols(spm_vol(bfile));
+        cons = dir(fullfile(out_dir, 'con_*.nii'));
+        for c = 1:numel(cons)
+            Vc  = spm_vol(fullfile(out_dir, cons(c).name));
+            con = spm_read_vols(Vc);
+            psc = 100 .* con .* peak ./ mean_img;
+            psc(~isfinite(psc)) = 0;
+            Vo = Vc; Vo.fname = fullfile(out_dir, ['ps' cons(c).name]);  % pscon_*.nii
+            Vo.descrip = 'percent signal change';
+            spm_write_vol(Vo, psc);
+        end
+        fprintf('  PSC written: pscon_*.nii (regressor peak = %.4f)\n', peak);
+    catch ME
+        warning('[PSC] could not compute (%s) — skipped', ME.message);
     end
 end
 
